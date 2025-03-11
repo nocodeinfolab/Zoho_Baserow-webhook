@@ -6,8 +6,8 @@ const bodyParser = require("body-parser");
 const app = express();
 app.use(bodyParser.json());
 
-// Zoho Credentials (loaded from environment variables)
-const ZOHO_ACCESS_TOKEN = process.env.ZOHO_ACCESS_TOKEN;
+// Zoho Credentials
+let ZOHO_ACCESS_TOKEN = process.env.ZOHO_ACCESS_TOKEN;
 const ZOHO_REFRESH_TOKEN = process.env.ZOHO_REFRESH_TOKEN;
 const ZOHO_CLIENT_ID = process.env.ZOHO_CLIENT_ID;
 const ZOHO_CLIENT_SECRET = process.env.ZOHO_CLIENT_SECRET;
@@ -26,89 +26,93 @@ async function refreshZohoToken() {
                 grant_type: "refresh_token"
             }
         });
-
-        const newAccessToken = response.data.access_token;
-        console.log("Zoho Access Token Refreshed:", newAccessToken);
-        return newAccessToken;
+        ZOHO_ACCESS_TOKEN = response.data.access_token;
+        console.log("Zoho Access Token Refreshed");
     } catch (error) {
         console.error("Failed to refresh Zoho token:", error.response ? error.response.data : error.message);
-        throw new Error("Zoho token refresh failed");
     }
 }
 
-// Function to create Sales Receipt in Zoho Books
-async function createSalesReceipt(transaction) {
+// Function to find an existing invoice
+async function findExistingInvoice(transactionId) {
     try {
-        console.log("Processing transaction:", transaction);
+        const response = await axios.get(
+            `https://www.zohoapis.com/books/v3/invoices?organization_id=${ZOHO_ORGANIZATION_ID}&reference_number=${transactionId}`,
+            { headers: { Authorization: `Zoho-oauthtoken ${ZOHO_ACCESS_TOKEN}` } }
+        );
+        if (response.data.invoices.length > 0) {
+            return response.data.invoices[0];
+        }
+        return null;
+    } catch (error) {
+        console.error("Error finding invoice:", error.response ? error.response.data : error.message);
+        return null;
+    }
+}
 
-        // Extract fields from Baserow
-        const {
-            "Transaction ID": transactionId,
-            "Patient Name": patientName,
-            "Date": date,
-            "Services": services,
-            "Payable Amount": payableAmount,
-            "Amount Paid (Cash)": cashAmount,
-            "Bank Transfer": bankTransferAmount,
-            "Cheque": chequeAmount,
-            "POS": posAmount,
-            "Total Amount Paid": totalAmountPaid,
-            "Pending Amount": pendingAmount,
-            "Balance Payment": balancePayment,
-            "Balance Payment Mode": balancePaymentMode,
-            "Balance Payment Date": balancePaymentDate
-        } = transaction;
+// Function to void an invoice
+async function voidInvoice(invoiceId) {
+    try {
+        await axios.post(
+            `https://www.zohoapis.com/books/v3/invoices/${invoiceId}/status/void?organization_id=${ZOHO_ORGANIZATION_ID}`,
+            {},
+            { headers: { Authorization: `Zoho-oauthtoken ${ZOHO_ACCESS_TOKEN}` } }
+        );
+        console.log("Invoice voided successfully");
+    } catch (error) {
+        console.error("Error voiding invoice:", error.response ? error.response.data : error.message);
+    }
+}
 
-        // Construct Sales Receipt payload
-        const salesReceiptData = {
-            customer_name: patientName, // Map to Zoho Books customer
-            date: date || new Date().toISOString().split("T")[0], // Use transaction date or today's date
-            line_items: [
-                {
-                    description: services || "Medical Services", // Map to Zoho Books item description
-                    rate: payableAmount, // Total payable amount
-                    quantity: 1
-                }
-            ],
-            payment_mode: "cash", // Default payment mode (can be updated dynamically)
-            reference_number: transactionId, // Use Transaction ID as reference
-            notes: `Transaction Details:
-                    - Cash: ${cashAmount}
-                    - Bank Transfer: ${bankTransferAmount}
-                    - Cheque: ${chequeAmount}
-                    - POS: ${posAmount}
-                    - Total Paid: ${totalAmountPaid}
-                    - Pending Amount: ${pendingAmount}
-                    - Balance Payment: ${balancePayment}
-                    - Balance Payment Mode: ${balancePaymentMode}
-                    - Balance Payment Date: ${balancePaymentDate}`
+// Function to create an invoice
+async function createInvoice(transaction) {
+    try {
+        // Extract the actual value from the linked "Patient Name" field
+        const patientName = transaction["Patient Name"]?.value || "Unknown Patient";
+
+        // Extract the actual value from the lookup "Services" field
+        const services = transaction["Services"]?.value || "Medical Services";
+
+        const invoiceData = {
+            customer_name: patientName,
+            reference_number: transaction["Transaction ID"],
+            date: transaction["Date"] || new Date().toISOString().split("T")[0],
+            line_items: [{
+                description: services,
+                rate: transaction["Payable Amount"],
+                quantity: 1
+            }]
         };
 
-        // Send Sales Receipt request to Zoho Books
         const response = await axios.post(
-            `https://www.zohoapis.com/books/v3/salesreceipts?organization_id=${ZOHO_ORGANIZATION_ID}`,
-            salesReceiptData,
-            {
-                headers: {
-                    Authorization: `Zoho-oauthtoken ${ZOHO_ACCESS_TOKEN}`,
-                    "Content-Type": "application/json"
-                }
-            }
+            `https://www.zohoapis.com/books/v3/invoices?organization_id=${ZOHO_ORGANIZATION_ID}`,
+            invoiceData,
+            { headers: { Authorization: `Zoho-oauthtoken ${ZOHO_ACCESS_TOKEN}` } }
         );
-
-        console.log("Sales Receipt Created in Zoho:", response.data);
-        return response.data;
+        return response.data.invoice;
     } catch (error) {
-        // If token expired, refresh and retry
-        if (error.response && error.response.status === 401) {
-            console.warn("Zoho Access Token Expired, refreshing...");
-            const newAccessToken = await refreshZohoToken();
-            process.env.ZOHO_ACCESS_TOKEN = newAccessToken; // Update the environment variable
-            return createSalesReceipt(transaction); // Retry with new token
-        }
+        console.error("Error creating invoice:", error.response ? error.response.data : error.message);
+        throw new Error("Failed to create invoice");
+    }
+}
 
-        console.error("Error creating Sales Receipt in Zoho:", error.response ? error.response.data : error.message);
-        throw new Error("Failed to create Sales Receipt");
+// Function to record a payment
+async function recordPayment(invoiceId, amount, mode) {
+    try {
+        const paymentData = {
+            invoice_id: invoiceId,
+            amount: amount,
+            payment_mode: mode,
+            date: new Date().toISOString().split("T")[0]
+        };
+        await axios.post(
+            `https://www.zohoapis.com/books/v3/customerpayments?organization_id=${ZOHO_ORGANIZATION_ID}`,
+            paymentData,
+            { headers: { Authorization: `Zoho-oauthtoken ${ZOHO_ACCESS_TOKEN}` } }
+        );
+        console.log("Payment recorded successfully");
+    } catch (error) {
+        console.error("Error recording payment:", error.response ? error.response.data : error.message);
     }
 }
 
@@ -116,10 +120,34 @@ async function createSalesReceipt(transaction) {
 app.post("/webhook", async (req, res) => {
     try {
         const transaction = req.body;
-        const zohoResponse = await createSalesReceipt(transaction);
-        res.status(200).json({ message: "Sales Receipt Created Successfully", data: zohoResponse });
+
+        // Extract values from linked and lookup fields
+        const transactionId = transaction["Transaction ID"];
+        const existingInvoice = await findExistingInvoice(transactionId);
+
+        if (existingInvoice) {
+            console.log("Existing invoice found. Checking for changes...");
+
+            // Extract values for comparison
+            const existingServices = existingInvoice.line_items[0].description;
+            const newServices = transaction["Services"]?.value || "Medical Services";
+
+            if (existingServices !== newServices ||
+                existingInvoice.line_items[0].rate !== transaction["Payable Amount"]) {
+                console.log("Invoice details changed. Voiding old invoice and creating a new one...");
+                await voidInvoice(existingInvoice.invoice_id);
+                const newInvoice = await createInvoice(transaction);
+                await recordPayment(newInvoice.invoice_id, transaction["Amount Paid (Cash)"] || 0, "cash");
+            }
+        } else {
+            console.log("No existing invoice found. Creating a new one...");
+            const newInvoice = await createInvoice(transaction);
+            await recordPayment(newInvoice.invoice_id, transaction["Amount Paid (Cash)"] || 0, "cash");
+        }
+
+        res.status(200).json({ message: "Invoice processed successfully" });
     } catch (error) {
-        res.status(500).json({ message: "Failed to process webhook", error: error.message });
+        res.status(500).json({ message: "Error processing webhook", error: error.message });
     }
 });
 
