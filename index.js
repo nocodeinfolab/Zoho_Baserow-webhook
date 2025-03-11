@@ -136,6 +136,27 @@ async function createInvoice(transaction) {
     }
 }
 
+// Function to record a payment
+async function recordPayment(invoiceId, amount, mode) {
+    try {
+        await ensureZohoToken();
+        const paymentData = {
+            invoice_id: invoiceId,
+            amount: amount,
+            payment_mode: mode,
+            date: new Date().toISOString().split("T")[0]
+        };
+        await axios.post(
+            `https://www.zohoapis.com/books/v3/customerpayments?organization_id=${ZOHO_ORGANIZATION_ID}`,
+            paymentData,
+            { headers: { Authorization: `Zoho-oauthtoken ${ZOHO_ACCESS_TOKEN}` } }
+        );
+        console.log("Payment recorded successfully");
+    } catch (error) {
+        console.error("Error recording payment:", error.response ? error.response.data : error.message);
+    }
+}
+
 // Webhook endpoint for Baserow
 app.post("/webhook", async (req, res) => {
     console.log("Webhook Payload:", JSON.stringify(req.body, null, 2));
