@@ -44,6 +44,22 @@ async function ensureZohoToken() {
     }
 }
 
+// Function to void an invoice
+async function voidInvoice(invoiceId) {
+    try {
+        await ensureZohoToken();
+        const response = await axios.post(
+            `https://www.zohoapis.com/books/v3/invoices/${invoiceId}/void?organization_id=${ZOHO_ORGANIZATION_ID}`,
+            null,
+            { headers: { Authorization: `Zoho-oauthtoken ${ZOHO_ACCESS_TOKEN}` } }
+        );
+        console.log("Invoice voided successfully:", JSON.stringify(response.data, null, 2));
+    } catch (error) {
+        console.error("Error voiding invoice:", error.response ? error.response.data : error.message);
+        throw new Error("Failed to void invoice");
+    }
+}
+
 // Function to find an existing invoice
 async function findExistingInvoice(transactionId) {
     try {
