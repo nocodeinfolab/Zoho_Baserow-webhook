@@ -110,6 +110,7 @@ async function createInvoice(transaction) {
         // Find or create the customer in Zoho Books
         const customerId = await findOrCreateCustomer(customerName);
 
+        // Extract the service name
         const services = transaction["Services (link)"]?.[0]?.value || "Medical Services";
 
         const invoiceData = {
