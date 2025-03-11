@@ -6,7 +6,7 @@ const bodyParser = require("body-parser");
 const app = express();
 app.use(bodyParser.json());
 
-// Zoho Credentials (Hardcoded as per your request)
+// Zoho Credentials (loaded from environment variables)
 const ZOHO_ACCESS_TOKEN = process.env.ZOHO_ACCESS_TOKEN;
 const ZOHO_REFRESH_TOKEN = process.env.ZOHO_REFRESH_TOKEN;
 const ZOHO_CLIENT_ID = process.env.ZOHO_CLIENT_ID;
@@ -27,9 +27,9 @@ async function refreshZohoToken() {
             }
         });
 
-        ZOHO_ACCESS_TOKEN = response.data.access_token;
-        console.log("Zoho Access Token Refreshed:", ZOHO_ACCESS_TOKEN);
-        return ZOHO_ACCESS_TOKEN;
+        const newAccessToken = response.data.access_token;
+        console.log("Zoho Access Token Refreshed:", newAccessToken);
+        return newAccessToken;
     } catch (error) {
         console.error("Failed to refresh Zoho token:", error.response ? error.response.data : error.message);
         throw new Error("Zoho token refresh failed");
@@ -102,7 +102,8 @@ async function createSalesReceipt(transaction) {
         // If token expired, refresh and retry
         if (error.response && error.response.status === 401) {
             console.warn("Zoho Access Token Expired, refreshing...");
-            await refreshZohoToken();
+            const newAccessToken = await refreshZohoToken();
+            process.env.ZOHO_ACCESS_TOKEN = newAccessToken; // Update the environment variable
             return createSalesReceipt(transaction); // Retry with new token
         }
 
@@ -123,5 +124,4 @@ app.post("/webhook", async (req, res) => {
 });
 
 // Server setup
-const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
