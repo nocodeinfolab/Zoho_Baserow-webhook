@@ -69,18 +69,32 @@ async function findExistingInvoice(transactionId) {
     }
 }
 
-// Function to void an invoice
-async function voidInvoice(invoiceId) {
+// Function to find or create a customer in Zoho Books
+async function findOrCreateCustomer(customerName) {
     try {
         await ensureZohoToken();
-        await axios.post(
-            `https://www.zohoapis.com/books/v3/invoices/${invoiceId}/status/void?organization_id=${ZOHO_ORGANIZATION_ID}`,
-            {},
+
+        // Search for the customer in Zoho Books
+        const searchResponse = await axios.get(
+            `https://www.zohoapis.com/books/v3/contacts?organization_id=${ZOHO_ORGANIZATION_ID}&contact_name=${encodeURIComponent(customerName)}`,
             { headers: { Authorization: `Zoho-oauthtoken ${ZOHO_ACCESS_TOKEN}` } }
         );
-        console.log("Invoice voided successfully");
+
+        if (searchResponse.data.contacts && searchResponse.data.contacts.length > 0) {
+            // Customer exists, return the first match
+            return searchResponse.data.contacts[0].contact_id;
+        } else {
+            // Customer does not exist, create a new one
+            const createResponse = await axios.post(
+                `https://www.zohoapis.com/books/v3/contacts?organization_id=${ZOHO_ORGANIZATION_ID}`,
+                { contact_name: customerName },
+                { headers: { Authorization: `Zoho-oauthtoken ${ZOHO_ACCESS_TOKEN}` } }
+            );
+            return createResponse.data.contact.contact_id;
+        }
     } catch (error) {
-        console.error("Error voiding invoice:", error.response ? error.response.data : error.message);
+        console.error("Error finding or creating customer:", error.response ? error.response.data : error.message);
+        throw new Error("Failed to find or create customer");
     }
 }
 
@@ -88,12 +102,19 @@ async function voidInvoice(invoiceId) {
 async function createInvoice(transaction) {
     try {
         await ensureZohoToken();
+
+        // Extract and clean the customer name
         const patientName = transaction["Patient Name"]?.[0]?.value || "Unknown Patient";
+        const customerName = patientName.split(" ").slice(0, -1).join(" "); // Remove the last part (e.g., "10002")
+
+        // Find or create the customer in Zoho Books
+        const customerId = await findOrCreateCustomer(customerName);
+
         const services = transaction["Services (link)"]?.[0]?.value || "Medical Services";
 
         const invoiceData = {
-            customer_name: patientName,
-            reference_number: transaction["Transaction ID"], // Set reference_number to Transaction ID
+            customer_id: customerId, // Use customer_id instead of customer_name
+            reference_number: transaction["Transaction ID"],
             date: transaction["Date"] || new Date().toISOString().split("T")[0],
             line_items: [{
                 description: services,
@@ -112,27 +133,6 @@ async function createInvoice(transaction) {
     } catch (error) {
         console.error("Zoho API Error:", error.response ? error.response.data : error.message);
         throw new Error("Failed to create invoice");
-    }
-}
-
-// Function to record a payment
-async function recordPayment(invoiceId, amount, mode) {
-    try {
-        await ensureZohoToken();
-        const paymentData = {
-            invoice_id: invoiceId,
-            amount: amount,
-            payment_mode: mode,
-            date: new Date().toISOString().split("T")[0]
-        };
-        await axios.post(
-            `https://www.zohoapis.com/books/v3/customerpayments?organization_id=${ZOHO_ORGANIZATION_ID}`,
-            paymentData,
-            { headers: { Authorization: `Zoho-oauthtoken ${ZOHO_ACCESS_TOKEN}` } }
-        );
-        console.log("Payment recorded successfully");
-    } catch (error) {
-        console.error("Error recording payment:", error.response ? error.response.data : error.message);
     }
 }
 
