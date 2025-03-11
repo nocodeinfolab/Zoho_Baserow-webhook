@@ -75,6 +75,39 @@ async function deletePayment(paymentId) {
     }
 }
 
+// Function to delete payments associated with an invoice
+async function deletePaymentsForInvoice(invoiceId) {
+    try {
+        // Fetch all payments in the organization
+        const paymentsResponse = await makeZohoRequest({
+            method: "get",
+            url: `https://www.zohoapis.com/books/v3/customerpayments?organization_id=${ZOHO_ORGANIZATION_ID}`
+        });
+
+        if (paymentsResponse.customerpayments && paymentsResponse.customerpayments.length > 0) {
+            // Filter payments to find those associated with the specific invoice
+            const paymentsForInvoice = paymentsResponse.customerpayments.filter(payment =>
+                payment.invoices.some(invoice => invoice.invoice_id === invoiceId)
+            );
+
+            if (paymentsForInvoice.length > 0) {
+                // Delete each payment associated with the invoice
+                for (const payment of paymentsForInvoice) {
+                    await deletePayment(payment.payment_id);
+                    console.log(`Payment ${payment.payment_id} deleted for invoice ${invoiceId}.`);
+                }
+            } else {
+                console.log("No payments found for the invoice.");
+            }
+        } else {
+            console.log("No payments found in the organization.");
+        }
+    } catch (error) {
+        console.error("Error deleting payments for invoice:", error.message);
+        throw new Error("Failed to delete payments for invoice");
+    }
+}
+
 // Function to void an invoice
 async function voidInvoice(invoiceId) {
     try {
@@ -266,29 +299,6 @@ async function recordPayment(invoiceId, amount, mode) {
     } catch (error) {
         console.error("Error recording payment:", error.message);
         throw new Error("Failed to record payment");
-    }
-}
-
-// Function to delete payments associated with an invoice
-async function deletePaymentsForInvoice(invoiceId) {
-    try {
-        // Fetch payments associated with the invoice
-        const paymentsResponse = await makeZohoRequest({
-            method: "get",
-            url: `https://www.zohoapis.com/books/v3/customerpayments?organization_id=${ZOHO_ORGANIZATION_ID}&invoice_id=${invoiceId}`
-        });
-
-        if (paymentsResponse.customerpayments && paymentsResponse.customerpayments.length > 0) {
-            // Delete each payment
-            for (const payment of paymentsResponse.customerpayments) {
-                await deletePayment(payment.payment_id);
-            }
-        } else {
-            console.log("No payments found for the invoice.");
-        }
-    } catch (error) {
-        console.error("Error deleting payments for invoice:", error.message);
-        throw new Error("Failed to delete payments for invoice");
     }
 }
 
