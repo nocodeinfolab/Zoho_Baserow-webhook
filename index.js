@@ -140,7 +140,7 @@ async function createInvoice(transaction) {
     }
 }
 
-// Function to record a payment
+// Function to record a payment and apply it to the invoice
 async function recordPayment(invoiceId, amount, mode) {
     try {
         await ensureZohoToken();
@@ -155,12 +155,18 @@ async function recordPayment(invoiceId, amount, mode) {
         const customerId = invoiceResponse.data.invoice.customer_id;
         console.log("Customer ID in Invoice:", customerId);
 
+        // Payment data with invoice application details
         const paymentData = {
-            invoice_id: invoiceId,
-            amount: amount,
+            customer_id: customerId, // Ensure the customer_id is included
             payment_mode: mode,
+            amount: amount,
             date: new Date().toISOString().split("T")[0],
-            customer_id: customerId // Ensure the customer_id is included in the payment data
+            invoices: [
+                {
+                    invoice_id: invoiceId,
+                    amount_applied: amount // Apply the full payment amount to this invoice
+                }
+            ]
         };
 
         console.log("Payment Data:", JSON.stringify(paymentData, null, 2)); // Log the payment data
@@ -170,7 +176,7 @@ async function recordPayment(invoiceId, amount, mode) {
             paymentData,
             { headers: { Authorization: `Zoho-oauthtoken ${ZOHO_ACCESS_TOKEN}` } }
         );
-        console.log("Payment recorded successfully:", JSON.stringify(paymentResponse.data, null, 2)); // Log the payment response
+        console.log("Payment recorded and applied successfully:", JSON.stringify(paymentResponse.data, null, 2)); // Log the payment response
     } catch (error) {
         console.error("Error recording payment:", error.response ? error.response.data : error.message);
         throw new Error("Failed to record payment");
