@@ -103,12 +103,11 @@ async function createInvoice(transaction) {
     try {
         await ensureZohoToken();
 
-        // Extract and clean the customer name
+        // Extract the full customer name (including numbers)
         const patientName = transaction["Patient Name"]?.[0]?.value || "Unknown Patient";
-        const customerName = patientName.split(" ").slice(0, -1).join(" "); // Remove the last part (e.g., "10002")
 
         // Find or create the customer in Zoho Books
-        const customerId = await findOrCreateCustomer(customerName);
+        const customerId = await findOrCreateCustomer(patientName);
 
         // Extract the service name
         const services = transaction["Services (link)"]?.[0]?.value || "Medical Services";
