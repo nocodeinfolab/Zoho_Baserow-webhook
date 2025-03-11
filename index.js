@@ -26,7 +26,7 @@ async function refreshZohoToken() {
                 grant_type: "refresh_token"
             }
         });
-        ZOHO_ACCESS_TOKEN = response.data.access_token;
+        ZOHO_ACCESS_TOKEN = response.data.access_token; // Update the global access token
         console.log("Zoho Access Token Refreshed:", ZOHO_ACCESS_TOKEN);
     } catch (error) {
         console.error("Failed to refresh Zoho token:", error.response ? error.response.data : error.message);
@@ -48,6 +48,12 @@ async function ensureZohoToken() {
 async function voidInvoice(invoiceId) {
     try {
         await ensureZohoToken();
+
+        // Validate invoiceId
+        if (!invoiceId) {
+            throw new Error("Invoice ID is missing or invalid.");
+        }
+
         const response = await axios.post(
             `https://www.zohoapis.com/books/v3/invoices/${invoiceId}/void?organization_id=${ZOHO_ORGANIZATION_ID}`,
             null,
@@ -225,8 +231,17 @@ app.post("/webhook", async (req, res) => {
             // Check if line_items exists and has at least one item
             if (!existingInvoice.line_items || existingInvoice.line_items.length === 0) {
                 console.log("Existing invoice has no line items. Voiding and creating a new invoice...");
-                await voidInvoice(existingInvoice.invoice_id); // Void the existing invoice
-                const newInvoice = await createInvoice(transaction); // Create a new invoice
+
+                try {
+                    // Void the existing invoice
+                    await voidInvoice(existingInvoice.invoice_id);
+                } catch (error) {
+                    console.error("Failed to void invoice. Stopping process to avoid duplicates:", error.message);
+                    throw new Error("Failed to void invoice. Stopping process to avoid duplicates.");
+                }
+
+                // Create a new invoice
+                const newInvoice = await createInvoice(transaction);
                 await recordPayment(newInvoice.invoice_id, transaction["Total Amount Paid"] || 0, "cash"); // Record payment
             } else {
                 // Compare existing invoice details with new transaction data
@@ -239,8 +254,17 @@ app.post("/webhook", async (req, res) => {
                 if (JSON.stringify(existingServices) !== JSON.stringify(newServices) ||
                     existingTotal !== newTotal) {
                     console.log("Invoice details changed. Voiding old invoice and creating a new one...");
-                    await voidInvoice(existingInvoice.invoice_id); // Void the existing invoice
-                    const newInvoice = await createInvoice(transaction); // Create a new invoice
+
+                    try {
+                        // Void the existing invoice
+                        await voidInvoice(existingInvoice.invoice_id);
+                    } catch (error) {
+                        console.error("Failed to void invoice. Stopping process to avoid duplicates:", error.message);
+                        throw new Error("Failed to void invoice. Stopping process to avoid duplicates.");
+                    }
+
+                    // Create a new invoice
+                    const newInvoice = await createInvoice(transaction);
                     await recordPayment(newInvoice.invoice_id, transaction["Total Amount Paid"] || 0, "cash"); // Record payment
                 } else {
                     console.log("No changes detected. Skipping invoice update.");
