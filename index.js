@@ -52,7 +52,8 @@ async function findExistingInvoice(transactionId) {
             `https://www.zohoapis.com/books/v3/invoices?organization_id=${ZOHO_ORGANIZATION_ID}&reference_number=${transactionId}`,
             { headers: { Authorization: `Zoho-oauthtoken ${ZOHO_ACCESS_TOKEN}` } }
         );
-        if (response.data.invoices.length > 0) {
+        console.log("Zoho API Response for Find Invoice:", JSON.stringify(response.data, null, 2)); // Log the response
+        if (response.data.invoices && response.data.invoices.length > 0) {
             return response.data.invoices[0];
         }
         return null;
@@ -100,7 +101,7 @@ async function createInvoice(transaction) {
             invoiceData,
             { headers: { Authorization: `Zoho-oauthtoken ${ZOHO_ACCESS_TOKEN}` } }
         );
-        console.log("Zoho API Response:", response.data);
+        console.log("Zoho API Response for Create Invoice:", JSON.stringify(response.data, null, 2)); // Log the response
         return response.data.invoice;
     } catch (error) {
         console.error("Zoho API Error:", error.response ? error.response.data : error.message);
@@ -137,7 +138,14 @@ app.post("/webhook", async (req, res) => {
         const existingInvoice = await findExistingInvoice(transaction["Transaction ID"]);
 
         if (existingInvoice) {
+            console.log("Existing Invoice:", JSON.stringify(existingInvoice, null, 2)); // Log the existing invoice
             console.log("Existing invoice found. Checking for changes...");
+
+            // Check if line_items exists and has at least one item
+            if (!existingInvoice.line_items || existingInvoice.line_items.length === 0) {
+                throw new Error("Existing invoice has no line items");
+            }
+
             const existingServices = existingInvoice.line_items[0].description;
             const newServices = transaction["Services"]?.value || "Medical Services";
 
