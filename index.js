@@ -105,9 +105,11 @@ async function createInvoice(transaction) {
 
         // Extract the full customer name (including numbers)
         const patientName = transaction["Patient Name"]?.[0]?.value || "Unknown Patient";
+        console.log("Extracted Patient Name:", patientName);
 
         // Find or create the customer in Zoho Books
         const customerId = await findOrCreateCustomer(patientName);
+        console.log("Customer ID:", customerId);
 
         // Extract the service name
         const services = transaction["Services (link)"]?.[0]?.value || "Medical Services";
@@ -122,6 +124,8 @@ async function createInvoice(transaction) {
                 quantity: 1
             }]
         };
+
+        console.log("Invoice Data:", JSON.stringify(invoiceData, null, 2)); // Log the invoice data
 
         const response = await axios.post(
             `https://www.zohoapis.com/books/v3/invoices?organization_id=${ZOHO_ORGANIZATION_ID}`,
@@ -140,20 +144,36 @@ async function createInvoice(transaction) {
 async function recordPayment(invoiceId, amount, mode) {
     try {
         await ensureZohoToken();
+
+        // Fetch the invoice to verify the customer_id
+        const invoiceResponse = await axios.get(
+            `https://www.zohoapis.com/books/v3/invoices/${invoiceId}?organization_id=${ZOHO_ORGANIZATION_ID}`,
+            { headers: { Authorization: `Zoho-oauthtoken ${ZOHO_ACCESS_TOKEN}` } }
+        );
+        console.log("Invoice Details:", JSON.stringify(invoiceResponse.data, null, 2)); // Log the invoice details
+
+        const customerId = invoiceResponse.data.invoice.customer_id;
+        console.log("Customer ID in Invoice:", customerId);
+
         const paymentData = {
             invoice_id: invoiceId,
             amount: amount,
             payment_mode: mode,
-            date: new Date().toISOString().split("T")[0]
+            date: new Date().toISOString().split("T")[0],
+            customer_id: customerId // Ensure the customer_id is included in the payment data
         };
-        await axios.post(
+
+        console.log("Payment Data:", JSON.stringify(paymentData, null, 2)); // Log the payment data
+
+        const paymentResponse = await axios.post(
             `https://www.zohoapis.com/books/v3/customerpayments?organization_id=${ZOHO_ORGANIZATION_ID}`,
             paymentData,
             { headers: { Authorization: `Zoho-oauthtoken ${ZOHO_ACCESS_TOKEN}` } }
         );
-        console.log("Payment recorded successfully");
+        console.log("Payment recorded successfully:", JSON.stringify(paymentResponse.data, null, 2)); // Log the payment response
     } catch (error) {
         console.error("Error recording payment:", error.response ? error.response.data : error.message);
+        throw new Error("Failed to record payment");
     }
 }
 
