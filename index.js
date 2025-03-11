@@ -242,7 +242,14 @@ app.post("/webhook", async (req, res) => {
 
                 // Create a new invoice
                 const newInvoice = await createInvoice(transaction);
-                await recordPayment(newInvoice.invoice_id, transaction["Total Amount Paid"] || 0, "cash"); // Record payment
+
+                // Record payment only if Total Amount Paid is greater than 0
+                const totalAmountPaid = parseFloat(transaction["Total Amount Paid"]) || 0;
+                if (totalAmountPaid > 0) {
+                    await recordPayment(newInvoice.invoice_id, totalAmountPaid, "cash");
+                } else {
+                    console.log("Total Amount Paid is zero. Skipping payment creation.");
+                }
             } else {
                 // Compare existing invoice details with new transaction data
                 const existingServices = existingInvoice.line_items.map(item => item.description);
@@ -265,15 +272,29 @@ app.post("/webhook", async (req, res) => {
 
                     // Create a new invoice
                     const newInvoice = await createInvoice(transaction);
-                    await recordPayment(newInvoice.invoice_id, transaction["Total Amount Paid"] || 0, "cash"); // Record payment
+
+                    // Record payment only if Total Amount Paid is greater than 0
+                    const totalAmountPaid = parseFloat(transaction["Total Amount Paid"]) || 0;
+                    if (totalAmountPaid > 0) {
+                        await recordPayment(newInvoice.invoice_id, totalAmountPaid, "cash");
+                    } else {
+                        console.log("Total Amount Paid is zero. Skipping payment creation.");
+                    }
                 } else {
                     console.log("No changes detected. Skipping invoice update.");
                 }
             }
         } else {
             console.log("No existing invoice found. Creating a new one...");
-            const newInvoice = await createInvoice(transaction); // Create a new invoice
-            await recordPayment(newInvoice.invoice_id, transaction["Total Amount Paid"] || 0, "cash"); // Record payment
+            const newInvoice = await createInvoice(transaction);
+
+            // Record payment only if Total Amount Paid is greater than 0
+            const totalAmountPaid = parseFloat(transaction["Total Amount Paid"]) || 0;
+            if (totalAmountPaid > 0) {
+                await recordPayment(newInvoice.invoice_id, totalAmountPaid, "cash");
+            } else {
+                console.log("Total Amount Paid is zero. Skipping payment creation.");
+            }
         }
 
         res.status(200).json({ message: "Invoice processed successfully" });
