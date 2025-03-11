@@ -53,8 +53,14 @@ async function findExistingInvoice(transactionId) {
             { headers: { Authorization: `Zoho-oauthtoken ${ZOHO_ACCESS_TOKEN}` } }
         );
         console.log("Zoho API Response for Find Invoice:", JSON.stringify(response.data, null, 2)); // Log the response
-        if (response.data.invoices && response.data.invoices.length > 0) {
-            return response.data.invoices[0];
+
+        // Filter invoices by reference_number
+        const matchingInvoices = response.data.invoices.filter(
+            invoice => invoice.reference_number === transactionId
+        );
+
+        if (matchingInvoices.length > 0) {
+            return matchingInvoices[0];
         }
         return null;
     } catch (error) {
@@ -82,12 +88,12 @@ async function voidInvoice(invoiceId) {
 async function createInvoice(transaction) {
     try {
         await ensureZohoToken();
-        const patientName = transaction["Patient Name"]?.value || "Unknown Patient";
-        const services = transaction["Services"]?.value || "Medical Services";
+        const patientName = transaction["Patient Name"]?.[0]?.value || "Unknown Patient";
+        const services = transaction["Services (link)"]?.[0]?.value || "Medical Services";
 
         const invoiceData = {
             customer_name: patientName,
-            reference_number: transaction["Transaction ID"],
+            reference_number: transaction["Transaction ID"], // Set reference_number to Transaction ID
             date: transaction["Date"] || new Date().toISOString().split("T")[0],
             line_items: [{
                 description: services,
@@ -135,7 +141,8 @@ app.post("/webhook", async (req, res) => {
     console.log("Webhook Payload:", JSON.stringify(req.body, null, 2));
     try {
         const transaction = req.body;
-        const existingInvoice = await findExistingInvoice(transaction["Transaction ID"]);
+        const transactionId = transaction["Transaction ID"];
+        const existingInvoice = await findExistingInvoice(transactionId);
 
         if (existingInvoice) {
             console.log("Existing Invoice:", JSON.stringify(existingInvoice, null, 2)); // Log the existing invoice
@@ -147,7 +154,7 @@ app.post("/webhook", async (req, res) => {
             }
 
             const existingServices = existingInvoice.line_items[0].description;
-            const newServices = transaction["Services"]?.value || "Medical Services";
+            const newServices = transaction["Services (link)"]?.[0]?.value || "Medical Services";
 
             if (existingServices !== newServices ||
                 existingInvoice.line_items[0].rate !== transaction["Payable Amount"]) {
