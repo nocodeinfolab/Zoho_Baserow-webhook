@@ -27,16 +27,20 @@ async function refreshZohoToken() {
             }
         });
         ZOHO_ACCESS_TOKEN = response.data.access_token;
-        console.log("Zoho Access Token Refreshed");
+        console.log("Zoho Access Token Refreshed:", ZOHO_ACCESS_TOKEN);
     } catch (error) {
         console.error("Failed to refresh Zoho token:", error.response ? error.response.data : error.message);
+        throw new Error("Failed to refresh Zoho token");
     }
 }
 
 // Function to ensure Zoho token is valid
 async function ensureZohoToken() {
     if (!ZOHO_ACCESS_TOKEN) {
+        console.log("Access token missing. Refreshing...");
         await refreshZohoToken();
+    } else {
+        console.log("Access token is present.");
     }
 }
 
@@ -96,10 +100,10 @@ async function createInvoice(transaction) {
             invoiceData,
             { headers: { Authorization: `Zoho-oauthtoken ${ZOHO_ACCESS_TOKEN}` } }
         );
-        console.log("Zoho API Response:", response.data); // Log the response
+        console.log("Zoho API Response:", response.data);
         return response.data.invoice;
     } catch (error) {
-        console.error("Zoho API Error:", error.response ? error.response.data : error.message); // Log the full error
+        console.error("Zoho API Error:", error.response ? error.response.data : error.message);
         throw new Error("Failed to create invoice");
     }
 }
@@ -127,7 +131,7 @@ async function recordPayment(invoiceId, amount, mode) {
 
 // Webhook endpoint for Baserow
 app.post("/webhook", async (req, res) => {
-    console.log("Webhook Payload:", JSON.stringify(req.body, null, 2)); // Log the payload
+    console.log("Webhook Payload:", JSON.stringify(req.body, null, 2));
     try {
         const transaction = req.body;
         const existingInvoice = await findExistingInvoice(transaction["Transaction ID"]);
@@ -152,7 +156,7 @@ app.post("/webhook", async (req, res) => {
 
         res.status(200).json({ message: "Invoice processed successfully" });
     } catch (error) {
-        console.error("Error details:", error); // Log the full error
+        console.error("Error details:", error);
         res.status(500).json({ message: "Error processing webhook", error: error.message });
     }
 });
