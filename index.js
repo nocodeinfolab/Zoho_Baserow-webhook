@@ -55,7 +55,7 @@ async function voidInvoice(invoiceId) {
         }
 
         const response = await axios.post(
-            `https://www.zohoapis.com/books/v3/invoices/${invoiceId}/void?organization_id=${ZOHO_ORGANIZATION_ID}`,
+            `https://www.zohoapis.com/books/v3/invoices/${invoiceId}/status/void?organization_id=${ZOHO_ORGANIZATION_ID}`,
             null,
             { headers: { Authorization: `Zoho-oauthtoken ${ZOHO_ACCESS_TOKEN}` } }
         );
