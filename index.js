@@ -61,6 +61,20 @@ async function makeZohoRequest(config, retry = true) {
     }
 }
 
+// Function to delete a payment
+async function deletePayment(paymentId) {
+    try {
+        const response = await makeZohoRequest({
+            method: "delete",
+            url: `https://www.zohoapis.com/books/v3/customerpayments/${paymentId}?organization_id=${ZOHO_ORGANIZATION_ID}`
+        });
+        console.log("Payment deleted successfully:", JSON.stringify(response, null, 2));
+    } catch (error) {
+        console.error("Error deleting payment:", error.message);
+        throw new Error("Failed to delete payment");
+    }
+}
+
 // Function to void an invoice
 async function voidInvoice(invoiceId) {
     try {
@@ -219,6 +233,29 @@ async function recordPayment(invoiceId, amount, mode) {
     }
 }
 
+// Function to delete payments associated with an invoice
+async function deletePaymentsForInvoice(invoiceId) {
+    try {
+        // Fetch payments associated with the invoice
+        const paymentsResponse = await makeZohoRequest({
+            method: "get",
+            url: `https://www.zohoapis.com/books/v3/customerpayments?organization_id=${ZOHO_ORGANIZATION_ID}&invoice_id=${invoiceId}`
+        });
+
+        if (paymentsResponse.customerpayments && paymentsResponse.customerpayments.length > 0) {
+            // Delete each payment
+            for (const payment of paymentsResponse.customerpayments) {
+                await deletePayment(payment.payment_id);
+            }
+        } else {
+            console.log("No payments found for the invoice.");
+        }
+    } catch (error) {
+        console.error("Error deleting payments for invoice:", error.message);
+        throw new Error("Failed to delete payments for invoice");
+    }
+}
+
 // Webhook endpoint for Baserow
 app.post("/webhook", async (req, res) => {
     console.log("Webhook Payload:", JSON.stringify(req.body, null, 2));
@@ -241,6 +278,9 @@ app.post("/webhook", async (req, res) => {
                 console.log("Existing invoice has no line items. Voiding and creating a new invoice...");
 
                 try {
+                    // Delete payments associated with the invoice
+                    await deletePaymentsForInvoice(existingInvoice.invoice_id);
+
                     // Void the existing invoice
                     await voidInvoice(existingInvoice.invoice_id);
                 } catch (error) {
@@ -271,6 +311,9 @@ app.post("/webhook", async (req, res) => {
                     console.log("Invoice details changed. Voiding old invoice and creating a new one...");
 
                     try {
+                        // Delete payments associated with the invoice
+                        await deletePaymentsForInvoice(existingInvoice.invoice_id);
+
                         // Void the existing invoice
                         await voidInvoice(existingInvoice.invoice_id);
                     } catch (error) {
