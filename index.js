@@ -1,92 +1,159 @@
+require("dotenv").config();
+const express = require("express");
 const axios = require("axios");
-const BASEROW_API_URL = "https://api.baserow.io/api/database/rows/table/";
-const BASEROW_TABLE_ID = "YOUR_BASEROW_TABLE_ID"; // Replace with your actual Baserow table ID
-const BASEROW_API_TOKEN = "YOUR_BASEROW_API_TOKEN"; // Replace with your Baserow API token
-const ZOHO_ORGANIZATION_ID = "YOUR_ZOHO_ORG_ID"; // Replace with your Zoho organization ID
-const ZOHO_ACCESS_TOKEN = "YOUR_ZOHO_ACCESS_TOKEN"; // Replace with your Zoho access token
+const bodyParser = require("body-parser");
 
-async function fetchTransactions() {
+const app = express();
+app.use(bodyParser.json());
+
+// Zoho Credentials
+let ZOHO_ACCESS_TOKEN = process.env.ZOHO_ACCESS_TOKEN;
+const ZOHO_REFRESH_TOKEN = process.env.ZOHO_REFRESH_TOKEN;
+const ZOHO_CLIENT_ID = process.env.ZOHO_CLIENT_ID;
+const ZOHO_CLIENT_SECRET = process.env.ZOHO_CLIENT_SECRET;
+const ZOHO_ORGANIZATION_ID = process.env.ZOHO_ORGANIZATION_ID;
+const PORT = process.env.PORT || 3000;
+
+// Function to refresh Zoho token
+async function refreshZohoToken() {
     try {
-        const response = await axios.get(`${BASEROW_API_URL}${BASEROW_TABLE_ID}/?user_field_names=true`, {
-            headers: { Authorization: `Token ${BASEROW_API_TOKEN}` }
+        console.log("Refreshing Zoho access token...");
+        const response = await axios.post("https://accounts.zoho.com/oauth/v2/token", null, {
+            params: {
+                refresh_token: ZOHO_REFRESH_TOKEN,
+                client_id: ZOHO_CLIENT_ID,
+                client_secret: ZOHO_CLIENT_SECRET,
+                grant_type: "refresh_token"
+            }
         });
-        return response.data.results;
+        ZOHO_ACCESS_TOKEN = response.data.access_token;
+        console.log("Zoho Access Token Refreshed");
     } catch (error) {
-        console.error("Error fetching transactions:", error);
-        return [];
+        console.error("Failed to refresh Zoho token:", error.response ? error.response.data : error.message);
+        throw new Error("Failed to refresh Zoho token");
     }
 }
 
-async function findOrCreateCustomer(customerName) {
+// Function to ensure Zoho token is valid
+async function ensureZohoToken() {
+    if (!ZOHO_ACCESS_TOKEN) {
+        await refreshZohoToken();
+    }
+}
+
+// Function to find an existing invoice
+async function findExistingInvoice(transactionId) {
     try {
-        console.log("Searching for customer:", customerName);
-        
-        const searchResponse = await axios.get(
-            `https://www.zohoapis.com/books/v3/contacts?organization_id=${ZOHO_ORGANIZATION_ID}&search_text=${encodeURIComponent(customerName)}`,
+        await ensureZohoToken();
+        const response = await axios.get(
+            `https://www.zohoapis.com/books/v3/invoices?organization_id=${ZOHO_ORGANIZATION_ID}&reference_number=${transactionId}`,
             { headers: { Authorization: `Zoho-oauthtoken ${ZOHO_ACCESS_TOKEN}` } }
         );
-        
-        if (searchResponse.data.contacts.length > 0) {
-            console.log("Customer found:", searchResponse.data.contacts[0].contact_id);
-            return searchResponse.data.contacts[0].contact_id;
-        }
-        
-        console.log("Customer not found, creating new customer...");
-        
-        const createResponse = await axios.post(
-            `https://www.zohoapis.com/books/v3/contacts?organization_id=${ZOHO_ORGANIZATION_ID}`,
-            {
-                contact_name: customerName,
-                contact_type: "customer",
-                company_name: customerName,
-                billing_address: { attention: customerName }
-            },
-            { headers: { Authorization: `Zoho-oauthtoken ${ZOHO_ACCESS_TOKEN}` } }
-        );
-        
-        console.log("New customer created:", createResponse.data.contact.contact_id);
-        return createResponse.data.contact.contact_id;
+        return response.data.invoices.find(invoice => invoice.reference_number === transactionId) || null;
     } catch (error) {
-        console.error("Error in findOrCreateCustomer:", error.response ? error.response.data : error.message);
+        console.error("Error finding invoice:", error.response ? error.response.data : error.message);
         return null;
     }
 }
 
-async function createInvoice(transaction) {
-    const customerName = transaction["Patient Name ParameterID"] || "Unknown Customer";
-    const customerId = await findOrCreateCustomer(customerName);
-    if (!customerId) return;
-
+// Function to find or create a customer in Zoho Books
+async function findOrCreateCustomer(customerId) {
     try {
-        console.log("Creating invoice for customer ID:", customerId);
+        await ensureZohoToken();
         
-        const invoiceResponse = await axios.post(
-            `https://www.zohoapis.com/books/v3/invoices?organization_id=${ZOHO_ORGANIZATION_ID}`,
-            {
-                customer_id: customerId,
-                line_items: [
-                    {
-                        item_name: "Medical Services",
-                        rate: transaction["Amount Paid (cash + bank transfer)"] || 0,
-                        quantity: 1
-                    }
-                ],
-                total: transaction["Amount Paid (cash + bank transfer)"] || 0
-            },
+        // Check if customer ID exists
+        if (customerId) {
+            const response = await axios.get(
+                `https://www.zohoapis.com/books/v3/contacts/${customerId}?organization_id=${ZOHO_ORGANIZATION_ID}`,
+                { headers: { Authorization: `Zoho-oauthtoken ${ZOHO_ACCESS_TOKEN}` } }
+            );
+            return response.data.contact.contact_id;
+        }
+
+        // If no valid customer ID, create a new generic customer
+        const createResponse = await axios.post(
+            `https://www.zohoapis.com/books/v3/contacts?organization_id=${ZOHO_ORGANIZATION_ID}`,
+            { contact_name: "New Patient" },
             { headers: { Authorization: `Zoho-oauthtoken ${ZOHO_ACCESS_TOKEN}` } }
         );
-        
-        console.log("Invoice created successfully:", invoiceResponse.data.invoice.invoice_id);
+        return createResponse.data.contact.contact_id;
     } catch (error) {
-        console.error("Error creating invoice:", error.response ? error.response.data : error.message);
+        console.error("Error finding or creating customer:", error.response ? error.response.data : error.message);
+        throw new Error("Failed to find or create customer");
     }
 }
 
-async function processTransactions() {
-    const transactions = await fetchTransactions();
-    for (const transaction of transactions) {
-        await createInvoice(transaction);
+// Function to create an invoice
+async function createInvoice(transaction) {
+    try {
+        await ensureZohoToken();
+        
+        const customerId = await findOrCreateCustomer(transaction["Patient Name ParameterID"]);
+        const services = transaction["Services (link)"]?.[0]?.value || "Medical Services";
+
+        const invoiceData = {
+            customer_id: customerId,
+            reference_number: transaction["Transaction ID"],
+            date: transaction["Date"] || new Date().toISOString().split("T")[0],
+            line_items: [{
+                description: services,
+                rate: transaction["Payable Amount"],
+                quantity: 1
+            }]
+        };
+
+        const response = await axios.post(
+            `https://www.zohoapis.com/books/v3/invoices?organization_id=${ZOHO_ORGANIZATION_ID}`,
+            invoiceData,
+            { headers: { Authorization: `Zoho-oauthtoken ${ZOHO_ACCESS_TOKEN}` } }
+        );
+        return response.data.invoice;
+    } catch (error) {
+        console.error("Zoho API Error:", error.response ? error.response.data : error.message);
+        throw new Error("Failed to create invoice");
     }
 }
 
-processTransactions();
+// Function to record a payment
+async function recordPayment(invoiceId, amount, mode) {
+    try {
+        await ensureZohoToken();
+        const paymentData = {
+            invoice_id: invoiceId,
+            amount: amount,
+            payment_mode: mode,
+            date: new Date().toISOString().split("T")[0]
+        };
+        await axios.post(
+            `https://www.zohoapis.com/books/v3/customerpayments?organization_id=${ZOHO_ORGANIZATION_ID}`,
+            paymentData,
+            { headers: { Authorization: `Zoho-oauthtoken ${ZOHO_ACCESS_TOKEN}` } }
+        );
+    } catch (error) {
+        console.error("Error recording payment:", error.response ? error.response.data : error.message);
+    }
+}
+
+// Webhook endpoint for Baserow
+app.post("/webhook", async (req, res) => {
+    try {
+        const transaction = req.body;
+        const transactionId = transaction["Transaction ID"];
+        const existingInvoice = await findExistingInvoice(transactionId);
+
+        if (existingInvoice) {
+            console.log("Invoice already exists, skipping creation.");
+        } else {
+            const newInvoice = await createInvoice(transaction);
+            await recordPayment(newInvoice.invoice_id, transaction["Amount Paid (Cash)"] || 0, "cash");
+        }
+
+        res.status(200).json({ message: "Invoice processed successfully" });
+    } catch (error) {
+        console.error("Error details:", error);
+        res.status(500).json({ message: "Error processing webhook", error: error.message });
+    }
+});
+
+// Server setup
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
