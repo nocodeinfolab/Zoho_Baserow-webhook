@@ -111,18 +111,24 @@ async function createInvoice(transaction) {
         const customerId = await findOrCreateCustomer(patientName);
         console.log("Customer ID:", customerId);
 
-        // Extract the service name
-        const services = transaction["Services (link)"]?.[0]?.value || "Medical Services";
+        // Extract services and prices
+        const services = transaction["Services"] || [];
+        const prices = transaction["Prices"] || [];
+        const lineItems = services.map((service, index) => ({
+            description: service.value || "Service",
+            rate: parseFloat(prices[index]?.value) || 0,
+            quantity: 1
+        }));
+
+        // Extract the total payable amount
+        const payableAmount = parseFloat(transaction["Payable Amount"]) || 0;
 
         const invoiceData = {
             customer_id: customerId, // Use customer_id instead of customer_name
             reference_number: transaction["Transaction ID"],
             date: transaction["Date"] || new Date().toISOString().split("T")[0],
-            line_items: [{
-                description: services,
-                rate: transaction["Payable Amount"],
-                quantity: 1
-            }]
+            line_items: lineItems,
+            total: payableAmount // Set the total payable amount
         };
 
         console.log("Invoice Data:", JSON.stringify(invoiceData, null, 2)); // Log the invoice data
@@ -202,23 +208,32 @@ app.post("/webhook", async (req, res) => {
 
             // Check if line_items exists and has at least one item
             if (!existingInvoice.line_items || existingInvoice.line_items.length === 0) {
-                throw new Error("Existing invoice has no line items");
-            }
+                console.log("Existing invoice has no line items. Voiding and creating a new invoice...");
+                await voidInvoice(existingInvoice.invoice_id); // Void the existing invoice
+                const newInvoice = await createInvoice(transaction); // Create a new invoice
+                await recordPayment(newInvoice.invoice_id, transaction["Total Amount Paid"] || 0, "cash"); // Record payment
+            } else {
+                // Compare existing invoice details with new transaction data
+                const existingServices = existingInvoice.line_items.map(item => item.description);
+                const newServices = transaction["Services"]?.map(service => service.value) || [];
 
-            const existingServices = existingInvoice.line_items[0].description;
-            const newServices = transaction["Services (link)"]?.[0]?.value || "Medical Services";
+                const existingTotal = existingInvoice.line_items.reduce((sum, item) => sum + item.rate, 0);
+                const newTotal = parseFloat(transaction["Payable Amount"]) || 0;
 
-            if (existingServices !== newServices ||
-                existingInvoice.line_items[0].rate !== transaction["Payable Amount"]) {
-                console.log("Invoice details changed. Voiding old invoice and creating a new one...");
-                await voidInvoice(existingInvoice.invoice_id);
-                const newInvoice = await createInvoice(transaction);
-                await recordPayment(newInvoice.invoice_id, transaction["Amount Paid (Cash)"] || 0, "cash");
+                if (JSON.stringify(existingServices) !== JSON.stringify(newServices) ||
+                    existingTotal !== newTotal) {
+                    console.log("Invoice details changed. Voiding old invoice and creating a new one...");
+                    await voidInvoice(existingInvoice.invoice_id); // Void the existing invoice
+                    const newInvoice = await createInvoice(transaction); // Create a new invoice
+                    await recordPayment(newInvoice.invoice_id, transaction["Total Amount Paid"] || 0, "cash"); // Record payment
+                } else {
+                    console.log("No changes detected. Skipping invoice update.");
+                }
             }
         } else {
             console.log("No existing invoice found. Creating a new one...");
-            const newInvoice = await createInvoice(transaction);
-            await recordPayment(newInvoice.invoice_id, transaction["Amount Paid (Cash)"] || 0, "cash");
+            const newInvoice = await createInvoice(transaction); // Create a new invoice
+            await recordPayment(newInvoice.invoice_id, transaction["Total Amount Paid"] || 0, "cash"); // Record payment
         }
 
         res.status(200).json({ message: "Invoice processed successfully" });
