@@ -86,7 +86,7 @@ async function createSalesReceipt(transaction) {
 
         // Send Sales Receipt request to Zoho Books
         const response = await axios.post(
-            `https://books.zoho.com/api/v3/salesreceipts?organization_id=${ZOHO_ORGANIZATION_ID}`,
+            `https://www.zohoapis.com/books/v3/salesreceipts?organization_id=${ZOHO_ORGANIZATION_ID}`,
             salesReceiptData,
             {
                 headers: {
