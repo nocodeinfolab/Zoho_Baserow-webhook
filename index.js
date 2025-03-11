@@ -33,9 +33,17 @@ async function refreshZohoToken() {
     }
 }
 
+// Function to ensure Zoho token is valid
+async function ensureZohoToken() {
+    if (!ZOHO_ACCESS_TOKEN) {
+        await refreshZohoToken();
+    }
+}
+
 // Function to find an existing invoice
 async function findExistingInvoice(transactionId) {
     try {
+        await ensureZohoToken();
         const response = await axios.get(
             `https://www.zohoapis.com/books/v3/invoices?organization_id=${ZOHO_ORGANIZATION_ID}&reference_number=${transactionId}`,
             { headers: { Authorization: `Zoho-oauthtoken ${ZOHO_ACCESS_TOKEN}` } }
@@ -53,6 +61,7 @@ async function findExistingInvoice(transactionId) {
 // Function to void an invoice
 async function voidInvoice(invoiceId) {
     try {
+        await ensureZohoToken();
         await axios.post(
             `https://www.zohoapis.com/books/v3/invoices/${invoiceId}/status/void?organization_id=${ZOHO_ORGANIZATION_ID}`,
             {},
@@ -67,10 +76,8 @@ async function voidInvoice(invoiceId) {
 // Function to create an invoice
 async function createInvoice(transaction) {
     try {
-        // Extract the actual value from the linked "Patient Name" field
+        await ensureZohoToken();
         const patientName = transaction["Patient Name"]?.value || "Unknown Patient";
-
-        // Extract the actual value from the lookup "Services" field
         const services = transaction["Services"]?.value || "Medical Services";
 
         const invoiceData = {
@@ -89,9 +96,10 @@ async function createInvoice(transaction) {
             invoiceData,
             { headers: { Authorization: `Zoho-oauthtoken ${ZOHO_ACCESS_TOKEN}` } }
         );
+        console.log("Zoho API Response:", response.data); // Log the response
         return response.data.invoice;
     } catch (error) {
-        console.error("Error creating invoice:", error.response ? error.response.data : error.message);
+        console.error("Zoho API Error:", error.response ? error.response.data : error.message); // Log the full error
         throw new Error("Failed to create invoice");
     }
 }
@@ -99,6 +107,7 @@ async function createInvoice(transaction) {
 // Function to record a payment
 async function recordPayment(invoiceId, amount, mode) {
     try {
+        await ensureZohoToken();
         const paymentData = {
             invoice_id: invoiceId,
             amount: amount,
@@ -118,17 +127,13 @@ async function recordPayment(invoiceId, amount, mode) {
 
 // Webhook endpoint for Baserow
 app.post("/webhook", async (req, res) => {
+    console.log("Webhook Payload:", JSON.stringify(req.body, null, 2)); // Log the payload
     try {
         const transaction = req.body;
-
-        // Extract values from linked and lookup fields
-        const transactionId = transaction["Transaction ID"];
-        const existingInvoice = await findExistingInvoice(transactionId);
+        const existingInvoice = await findExistingInvoice(transaction["Transaction ID"]);
 
         if (existingInvoice) {
             console.log("Existing invoice found. Checking for changes...");
-
-            // Extract values for comparison
             const existingServices = existingInvoice.line_items[0].description;
             const newServices = transaction["Services"]?.value || "Medical Services";
 
@@ -147,6 +152,7 @@ app.post("/webhook", async (req, res) => {
 
         res.status(200).json({ message: "Invoice processed successfully" });
     } catch (error) {
+        console.error("Error details:", error); // Log the full error
         res.status(500).json({ message: "Error processing webhook", error: error.message });
     }
 });
