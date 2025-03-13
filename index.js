@@ -183,14 +183,14 @@ async function createPayment(invoiceId, amount, mode = "cash") {
 
         // Payment data with invoice application details
         const paymentData = {
-            customer_id: customerId, // Ensure the customer_id is included
-            payment_mode: mode,
-            amount: paymentAmount,
-            date: new Date().toISOString().split("T")[0],
+            customer_id: customerId, // Required
+            payment_mode: mode, // Required
+            amount: paymentAmount, // Required
+            date: new Date().toISOString().split("T")[0], // Required
             invoices: [
                 {
-                    invoice_id: invoiceId,
-                    amount_applied: paymentAmount // Apply the payment amount to this invoice
+                    invoice_id: invoiceId, // Required
+                    amount_applied: paymentAmount // Required
                 }
             ]
         };
@@ -235,7 +235,7 @@ async function createPayment(invoiceId, amount, mode = "cash") {
     }
 }
 
-// Function to update a payment
+// Function to update a payment (with optional fields removed)
 async function updatePayment(paymentId, invoiceId, amount, paymentMode = "cash") {
     try {
         // Fetch the invoice to verify the customer_id and balance
@@ -250,25 +250,17 @@ async function updatePayment(paymentId, invoiceId, amount, paymentMode = "cash")
         console.log("Customer ID in Invoice:", customerId);
         console.log("Invoice Balance:", invoiceBalance);
 
-        // Prepare the payment data for updating
+        // Prepare the payment data for updating (only required fields)
         const paymentData = {
             customer_id: customerId, // Required
             payment_mode: paymentMode, // Required
             amount: amount, // Required
-            date: new Date().toISOString().split("T")[0], // Optional
-            reference_number: `Payment for Invoice ${invoiceResponse.invoice.invoice_number}`, // Optional
-            description: `Payment updated for Invoice ${invoiceResponse.invoice.invoice_number}`, // Optional
             invoices: [
                 {
                     invoice_id: invoiceId, // Required
                     amount_applied: amount // Required
                 }
-            ],
-            exchange_rate: 1, // Optional, default is 1
-            bank_charges: 0, // Optional
-            tax_amount_withheld: 0, // Optional
-            location_id: "", // Optional
-            account_id: "" // Optional
+            ]
         };
 
         console.log("Payment Data for Update:", JSON.stringify(paymentData, null, 2)); // Log the payment data
