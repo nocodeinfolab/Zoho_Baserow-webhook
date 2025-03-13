@@ -295,12 +295,12 @@ app.post("/webhook", async (req, res) => {
             };
 
             // Update the existing invoice
-            await updateInvoice(existingInvoice.invoice_id, updatedInvoiceData);
+            const updatedInvoice = await updateInvoice(existingInvoice.invoice_id, updatedInvoiceData);
 
             // Record payment only if Total Amount Paid is greater than 0
             const totalAmountPaid = parseFloat(transaction["Total Amount Paid"]) || 0;
             if (totalAmountPaid > 0) {
-                await recordPayment(existingInvoice.invoice_id, totalAmountPaid, "cash");
+                await recordPayment(updatedInvoice.invoice_id, totalAmountPaid, "cash");
             } else {
                 console.log("Total Amount Paid is zero. Skipping payment creation.");
             }
