@@ -64,6 +64,9 @@ async function makeZohoRequest(config, retry = true) {
 // Function to update an invoice
 async function updateInvoice(invoiceId, invoiceData) {
     try {
+        // Add a reason for updating the invoice
+        invoiceData.reason = "Correction to invoice details"; // Customize this reason as needed
+
         const response = await makeZohoRequest({
             method: "put",
             url: `https://www.zohoapis.com/books/v3/invoices/${invoiceId}?organization_id=${ZOHO_ORGANIZATION_ID}`,
@@ -287,7 +290,8 @@ app.post("/webhook", async (req, res) => {
                 reference_number: transactionId,
                 date: transaction["Date"] || new Date().toISOString().split("T")[0],
                 line_items: newLineItems,
-                total: payableAmount
+                total: payableAmount,
+                reason: "Correction to invoice details" // Add a reason for the update
             };
 
             // Update the existing invoice
