@@ -61,70 +61,20 @@ async function makeZohoRequest(config, retry = true) {
     }
 }
 
-// Function to delete a payment
-async function deletePayment(paymentId) {
+// Function to update an invoice
+async function updateInvoice(invoiceId, invoiceData) {
     try {
         const response = await makeZohoRequest({
-            method: "delete",
-            url: `https://www.zohoapis.com/books/v3/customerpayments/${paymentId}?organization_id=${ZOHO_ORGANIZATION_ID}`
+            method: "put",
+            url: `https://www.zohoapis.com/books/v3/invoices/${invoiceId}?organization_id=${ZOHO_ORGANIZATION_ID}`,
+            headers: { "content-type": "application/json" },
+            data: invoiceData
         });
-        console.log("Payment deleted successfully:", JSON.stringify(response, null, 2));
+        console.log("Invoice updated successfully:", JSON.stringify(response, null, 2));
+        return response.invoice;
     } catch (error) {
-        console.error("Error deleting payment:", error.message);
-        throw new Error("Failed to delete payment");
-    }
-}
-
-// Function to delete payments associated with an invoice
-async function deletePaymentsForInvoice(invoiceId) {
-    try {
-        // Fetch all payments in the organization
-        const paymentsResponse = await makeZohoRequest({
-            method: "get",
-            url: `https://www.zohoapis.com/books/v3/customerpayments?organization_id=${ZOHO_ORGANIZATION_ID}`
-        });
-
-        if (paymentsResponse.customerpayments && paymentsResponse.customerpayments.length > 0) {
-            // Filter payments to find those associated with the specific invoice
-            const paymentsForInvoice = paymentsResponse.customerpayments.filter(payment =>
-                payment.invoices.some(invoice => invoice.invoice_id === invoiceId)
-            );
-
-            if (paymentsForInvoice.length > 0) {
-                // Delete each payment associated with the invoice
-                for (const payment of paymentsForInvoice) {
-                    await deletePayment(payment.payment_id);
-                    console.log(`Payment ${payment.payment_id} deleted for invoice ${invoiceId}.`);
-                }
-            } else {
-                console.log("No payments found for the invoice.");
-            }
-        } else {
-            console.log("No payments found in the organization.");
-        }
-    } catch (error) {
-        console.error("Error deleting payments for invoice:", error.message);
-        throw new Error("Failed to delete payments for invoice");
-    }
-}
-
-// Function to void an invoice
-async function voidInvoice(invoiceId) {
-    try {
-        // Validate invoiceId
-        if (!invoiceId) {
-            throw new Error("Invoice ID is missing or invalid.");
-        }
-
-        const response = await makeZohoRequest({
-            method: "post",
-            url: `https://www.zohoapis.com/books/v3/invoices/${invoiceId}/status/void?organization_id=${ZOHO_ORGANIZATION_ID}`,
-            data: null
-        });
-        console.log("Invoice voided successfully:", JSON.stringify(response, null, 2));
-    } catch (error) {
-        console.error("Error voiding invoice:", error.message);
-        throw new Error("Failed to void invoice");
+        console.error("Error updating invoice:", error.message);
+        throw new Error("Failed to update invoice");
     }
 }
 
@@ -319,67 +269,36 @@ app.post("/webhook", async (req, res) => {
             console.log("Existing Invoice:", JSON.stringify(existingInvoice, null, 2)); // Log the existing invoice
             console.log("Existing invoice found. Checking for changes...");
 
-            // Check if line_items exists and has at least one item
-            if (!existingInvoice.line_items || existingInvoice.line_items.length === 0) {
-                console.log("Existing invoice has no line items. Voiding and creating a new invoice...");
+            // Extract services and prices from the transaction
+            const services = transaction["Services"] || [];
+            const prices = transaction["Prices"] || [];
+            const newLineItems = services.map((service, index) => ({
+                description: service.value || "Service",
+                rate: parseFloat(prices[index]?.value) || 0,
+                quantity: 1
+            }));
 
-                try {
-                    // Delete payments associated with the invoice
-                    await deletePaymentsForInvoice(existingInvoice.invoice_id);
+            // Extract the total payable amount
+            const payableAmount = parseFloat(transaction["Payable Amount"]) || 0;
 
-                    // Void the existing invoice
-                    await voidInvoice(existingInvoice.invoice_id);
-                } catch (error) {
-                    console.error("Failed to void invoice. Stopping process to avoid duplicates:", error.message);
-                    throw new Error("Failed to void invoice. Stopping process to avoid duplicates.");
-                }
+            // Prepare the updated invoice data
+            const updatedInvoiceData = {
+                customer_id: existingInvoice.customer_id,
+                reference_number: transactionId,
+                date: transaction["Date"] || new Date().toISOString().split("T")[0],
+                line_items: newLineItems,
+                total: payableAmount
+            };
 
-                // Create a new invoice
-                const newInvoice = await createInvoice(transaction);
+            // Update the existing invoice
+            await updateInvoice(existingInvoice.invoice_id, updatedInvoiceData);
 
-                // Record payment only if Total Amount Paid is greater than 0
-                const totalAmountPaid = parseFloat(transaction["Total Amount Paid"]) || 0;
-                if (totalAmountPaid > 0) {
-                    await recordPayment(newInvoice.invoice_id, totalAmountPaid, "cash");
-                } else {
-                    console.log("Total Amount Paid is zero. Skipping payment creation.");
-                }
+            // Record payment only if Total Amount Paid is greater than 0
+            const totalAmountPaid = parseFloat(transaction["Total Amount Paid"]) || 0;
+            if (totalAmountPaid > 0) {
+                await recordPayment(existingInvoice.invoice_id, totalAmountPaid, "cash");
             } else {
-                // Compare existing invoice details with new transaction data
-                const existingServices = existingInvoice.line_items.map(item => item.description);
-                const newServices = transaction["Services"]?.map(service => service.value) || [];
-
-                const existingTotal = existingInvoice.line_items.reduce((sum, item) => sum + item.rate, 0);
-                const newTotal = parseFloat(transaction["Payable Amount"]) || 0;
-
-                if (JSON.stringify(existingServices) !== JSON.stringify(newServices) ||
-                    existingTotal !== newTotal) {
-                    console.log("Invoice details changed. Voiding old invoice and creating a new one...");
-
-                    try {
-                        // Delete payments associated with the invoice
-                        await deletePaymentsForInvoice(existingInvoice.invoice_id);
-
-                        // Void the existing invoice
-                        await voidInvoice(existingInvoice.invoice_id);
-                    } catch (error) {
-                        console.error("Failed to void invoice. Stopping process to avoid duplicates:", error.message);
-                        throw new Error("Failed to void invoice. Stopping process to avoid duplicates.");
-                    }
-
-                    // Create a new invoice
-                    const newInvoice = await createInvoice(transaction);
-
-                    // Record payment only if Total Amount Paid is greater than 0
-                    const totalAmountPaid = parseFloat(transaction["Total Amount Paid"]) || 0;
-                    if (totalAmountPaid > 0) {
-                        await recordPayment(newInvoice.invoice_id, totalAmountPaid, "cash");
-                    } else {
-                        console.log("Total Amount Paid is zero. Skipping payment creation.");
-                    }
-                } else {
-                    console.log("No changes detected. Skipping invoice update.");
-                }
+                console.log("Total Amount Paid is zero. Skipping payment creation.");
             }
         } else {
             console.log("No existing invoice found. Creating a new one...");
