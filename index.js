@@ -235,7 +235,7 @@ async function createPayment(invoiceId, amount, mode = "cash") {
     }
 }
 
-// Function to update a payment (with optional fields removed)
+// Function to update a payment (with customer_id validation)
 async function updatePayment(paymentId, invoiceId, amount, paymentMode = "cash") {
     try {
         // Fetch the invoice to verify the customer_id and balance
@@ -245,14 +245,14 @@ async function updatePayment(paymentId, invoiceId, amount, paymentMode = "cash")
         });
         console.log("Invoice Details:", JSON.stringify(invoiceResponse, null, 2)); // Log the invoice details
 
-        const customerId = invoiceResponse.invoice.customer_id;
+        const customerId = invoiceResponse.invoice.customer_id; // Fetch customer_id from the invoice
         const invoiceBalance = parseFloat(invoiceResponse.invoice.balance) || 0;
         console.log("Customer ID in Invoice:", customerId);
         console.log("Invoice Balance:", invoiceBalance);
 
         // Prepare the payment data for updating (only required fields)
         const paymentData = {
-            customer_id: customerId, // Required
+            customer_id: customerId, // Use the customer_id from the invoice
             payment_mode: paymentMode, // Required
             amount: amount, // Required
             invoices: [
@@ -275,7 +275,7 @@ async function updatePayment(paymentId, invoiceId, amount, paymentMode = "cash")
 
         return paymentResponse;
     } catch (error) {
-        console.error("Error updating payment:", error.message);
+        console.error("Error updating payment:", error.response ? error.response.data : error.message);
         throw new Error("Failed to update payment");
     }
 }
