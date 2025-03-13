@@ -314,7 +314,7 @@ app.post("/webhook", async (req, res) => {
                     await refundPayment(payment.payment_id, {
                         amount: payment.amount,
                         date: new Date().toISOString().split("T")[0],
-                        reason: "Refund for invoice update"
+                        reason: "Refund due to invoice update" // Valid reason for refund
                     });
                 }
             } else {
