@@ -178,8 +178,53 @@ async function createInvoice(transaction) {
     }
 }
 
-// Function to record a payment and apply it to the invoice
-async function recordPayment(invoiceId, amount, mode) {
+// Function to update a payment
+async function updatePayment(invoiceId, amount) {
+    try {
+        // Fetch the invoice to verify the customer_id and balance
+        const invoiceResponse = await makeZohoRequest({
+            method: "get",
+            url: `https://www.zohoapis.com/books/v3/invoices/${invoiceId}?organization_id=${ZOHO_ORGANIZATION_ID}`
+        });
+        console.log("Invoice Details:", JSON.stringify(invoiceResponse, null, 2)); // Log the invoice details
+
+        const customerId = invoiceResponse.invoice.customer_id;
+        const invoiceBalance = parseFloat(invoiceResponse.invoice.balance) || 0;
+        console.log("Customer ID in Invoice:", customerId);
+        console.log("Invoice Balance:", invoiceBalance);
+
+        // Payment data with invoice application details
+        const paymentData = {
+            customer_id: customerId,
+            payment_mode: "cash",
+            amount: amount,
+            date: new Date().toISOString().split("T")[0],
+            invoices: [
+                {
+                    invoice_id: invoiceId,
+                    amount_applied: 0 // Clear the applied amount
+                }
+            ]
+        };
+
+        console.log("Payment Data:", JSON.stringify(paymentData, null, 2)); // Log the payment data
+
+        const paymentResponse = await makeZohoRequest({
+            method: "post",
+            url: `https://www.zohoapis.com/books/v3/customerpayments?organization_id=${ZOHO_ORGANIZATION_ID}`,
+            data: paymentData
+        });
+        console.log("Payment updated successfully:", JSON.stringify(paymentResponse, null, 2)); // Log the payment response
+
+        return paymentResponse;
+    } catch (error) {
+        console.error("Error updating payment:", error.message);
+        throw new Error("Failed to update payment");
+    }
+}
+
+// Function to apply credit (excess amount) to the invoice
+async function applyCredit(invoiceId, amount) {
     try {
         // Fetch the invoice to verify the customer_id and balance
         const invoiceResponse = await makeZohoRequest({
@@ -203,8 +248,8 @@ async function recordPayment(invoiceId, amount, mode) {
 
         // Payment data with invoice application details
         const paymentData = {
-            customer_id: customerId, // Ensure the customer_id is included
-            payment_mode: mode,
+            customer_id: customerId,
+            payment_mode: "cash",
             amount: paymentAmount,
             date: new Date().toISOString().split("T")[0],
             invoices: [
@@ -250,8 +295,8 @@ async function recordPayment(invoiceId, amount, mode) {
             console.log("Credit Note Created:", JSON.stringify(creditNoteResponse, null, 2));
         }
     } catch (error) {
-        console.error("Error recording payment:", error.message);
-        throw new Error("Failed to record payment");
+        console.error("Error applying credit:", error.message);
+        throw new Error("Failed to apply credit");
     }
 }
 
@@ -272,7 +317,17 @@ app.post("/webhook", async (req, res) => {
             console.log("Existing Invoice:", JSON.stringify(existingInvoice, null, 2)); // Log the existing invoice
             console.log("Existing invoice found. Checking for changes...");
 
-            // Extract services and prices from the transaction
+            // Extract the total amount paid from the transaction
+            const totalAmountPaid = parseFloat(transaction["Total Amount Paid"]) || 0;
+
+            // Step 1: Update the payment
+            if (totalAmountPaid > 0) {
+                await updatePayment(existingInvoice.invoice_id, totalAmountPaid);
+            } else {
+                console.log("Total Amount Paid is zero. Skipping payment update.");
+            }
+
+            // Step 2: Update the invoice
             const services = transaction["Services"] || [];
             const prices = transaction["Prices"] || [];
             const newLineItems = services.map((service, index) => ({
@@ -297,12 +352,10 @@ app.post("/webhook", async (req, res) => {
             // Update the existing invoice
             const updatedInvoice = await updateInvoice(existingInvoice.invoice_id, updatedInvoiceData);
 
-            // Record payment only if Total Amount Paid is greater than 0
-            const totalAmountPaid = parseFloat(transaction["Total Amount Paid"]) || 0;
-            if (totalAmountPaid > 0) {
-                await recordPayment(updatedInvoice.invoice_id, totalAmountPaid, "cash");
-            } else {
-                console.log("Total Amount Paid is zero. Skipping payment creation.");
+            // Step 3: Apply credit (excess amount) to the invoice
+            if (totalAmountPaid > payableAmount) {
+                const excessAmount = totalAmountPaid - payableAmount;
+                await applyCredit(updatedInvoice.invoice_id, excessAmount);
             }
         } else {
             console.log("No existing invoice found. Creating a new one...");
@@ -311,7 +364,7 @@ app.post("/webhook", async (req, res) => {
             // Record payment only if Total Amount Paid is greater than 0
             const totalAmountPaid = parseFloat(transaction["Total Amount Paid"]) || 0;
             if (totalAmountPaid > 0) {
-                await recordPayment(newInvoice.invoice_id, totalAmountPaid, "cash");
+                await updatePayment(newInvoice.invoice_id, totalAmountPaid);
             } else {
                 console.log("Total Amount Paid is zero. Skipping payment creation.");
             }
