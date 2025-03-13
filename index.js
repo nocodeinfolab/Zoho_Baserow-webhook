@@ -61,6 +61,38 @@ async function makeZohoRequest(config, retry = true) {
     }
 }
 
+// Function to refund a payment
+async function refundPayment(paymentId, refundData) {
+    try {
+        const response = await makeZohoRequest({
+            method: "post",
+            url: `https://www.zohoapis.com/books/v3/customerpayments/${paymentId}/refunds?organization_id=${ZOHO_ORGANIZATION_ID}`,
+            headers: { "content-type": "application/json" },
+            data: refundData
+        });
+        console.log("Payment refunded successfully:", JSON.stringify(response, null, 2));
+        return response;
+    } catch (error) {
+        console.error("Error refunding payment:", error.message);
+        throw new Error("Failed to refund payment");
+    }
+}
+
+// Function to fetch payments related to an invoice
+async function fetchPaymentsForInvoice(invoiceId) {
+    try {
+        const response = await makeZohoRequest({
+            method: "get",
+            url: `https://www.zohoapis.com/books/v3/customerpayments?organization_id=${ZOHO_ORGANIZATION_ID}&invoice_id=${invoiceId}`
+        });
+        console.log("Payments fetched successfully:", JSON.stringify(response, null, 2));
+        return response.customerpayments;
+    } catch (error) {
+        console.error("Error fetching payments:", error.message);
+        throw new Error("Failed to fetch payments");
+    }
+}
+
 // Function to update an invoice
 async function updateInvoice(invoiceId, invoiceData) {
     try {
@@ -255,51 +287,6 @@ async function createPayment(invoiceId, amount, mode) {
     }
 }
 
-// Function to update a payment
-async function updatePayment(invoiceId, amount) {
-    try {
-        // Fetch the invoice to verify the customer_id and balance
-        const invoiceResponse = await makeZohoRequest({
-            method: "get",
-            url: `https://www.zohoapis.com/books/v3/invoices/${invoiceId}?organization_id=${ZOHO_ORGANIZATION_ID}`
-        });
-        console.log("Invoice Details:", JSON.stringify(invoiceResponse, null, 2)); // Log the invoice details
-
-        const customerId = invoiceResponse.invoice.customer_id;
-        const invoiceBalance = parseFloat(invoiceResponse.invoice.balance) || 0;
-        console.log("Customer ID in Invoice:", customerId);
-        console.log("Invoice Balance:", invoiceBalance);
-
-        // Payment data with invoice application details
-        const paymentData = {
-            customer_id: customerId,
-            payment_mode: "cash",
-            amount: amount,
-            date: new Date().toISOString().split("T")[0],
-            invoices: [
-                {
-                    invoice_id: invoiceId,
-                    amount_applied: 0 // Clear the applied amount
-                }
-            ]
-        };
-
-        console.log("Payment Data:", JSON.stringify(paymentData, null, 2)); // Log the payment data
-
-        const paymentResponse = await makeZohoRequest({
-            method: "post",
-            url: `https://www.zohoapis.com/books/v3/customerpayments?organization_id=${ZOHO_ORGANIZATION_ID}`,
-            data: paymentData
-        });
-        console.log("Payment updated successfully:", JSON.stringify(paymentResponse, null, 2)); // Log the payment response
-
-        return paymentResponse;
-    } catch (error) {
-        console.error("Error updating payment:", error.message);
-        throw new Error("Failed to update payment");
-    }
-}
-
 // Webhook endpoint for Baserow
 app.post("/webhook", async (req, res) => {
     console.log("Webhook Payload:", JSON.stringify(req.body, null, 2));
@@ -315,14 +302,23 @@ app.post("/webhook", async (req, res) => {
 
         if (existingInvoice) {
             console.log("Existing Invoice:", JSON.stringify(existingInvoice, null, 2)); // Log the existing invoice
-            console.log("Existing invoice found. Checking for changes...");
+            console.log("Existing invoice found. Checking for payments...");
 
-            // Step 1: Update the payment
-            const totalAmountPaid = parseFloat(transaction["Total Amount Paid"]) || 0;
-            if (totalAmountPaid > 0) {
-                await updatePayment(existingInvoice.invoice_id, totalAmountPaid);
+            // Fetch payments related to the invoice
+            const payments = await fetchPaymentsForInvoice(existingInvoice.invoice_id);
+            if (payments && payments.length > 0) {
+                console.log("Payments found. Issuing refunds...");
+
+                // Refund each payment
+                for (const payment of payments) {
+                    await refundPayment(payment.payment_id, {
+                        amount: payment.amount,
+                        date: new Date().toISOString().split("T")[0],
+                        reason: "Refund for invoice update"
+                    });
+                }
             } else {
-                console.log("Total Amount Paid is zero. Skipping payment update.");
+                console.log("No payments found. Skipping refunds.");
             }
 
             // Step 2: Update the invoice
@@ -349,6 +345,14 @@ app.post("/webhook", async (req, res) => {
 
             // Update the existing invoice
             await updateInvoice(existingInvoice.invoice_id, updatedInvoiceData);
+
+            // Step 3: Create a new payment if Total Amount Paid is greater than 0
+            const totalAmountPaid = parseFloat(transaction["Total Amount Paid"]) || 0;
+            if (totalAmountPaid > 0) {
+                await createPayment(existingInvoice.invoice_id, totalAmountPaid, "cash");
+            } else {
+                console.log("Total Amount Paid is zero. Skipping payment creation.");
+            }
         } else {
             console.log("No existing invoice found. Creating a new one...");
             const newInvoice = await createInvoice(transaction);
