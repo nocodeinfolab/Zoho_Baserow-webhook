@@ -204,47 +204,43 @@ async function createPayment(invoiceId, amount, mode = "cash") {
         });
         console.log("Payment created and applied successfully:", JSON.stringify(paymentResponse, null, 2)); // Log the payment response
 
-        // Handle overpayment (if any)
-        const overpaymentAmount = amount - paymentAmount;
-        if (overpaymentAmount > 0) {
-            console.log(`Overpayment detected: ${overpaymentAmount}. Creating a credit note...`);
-
-            const creditNoteData = {
-                customer_id: customerId,
-                reference_number: `Overpayment for Invoice ${invoiceResponse.invoice.invoice_number}`,
-                date: new Date().toISOString().split("T")[0],
-                line_items: [
-                    {
-                        description: "Overpayment Credit",
-                        rate: overpaymentAmount,
-                        quantity: 1
-                    }
-                ]
-            };
-
-            const creditNoteResponse = await makeZohoRequest({
-                method: "post",
-                url: `https://www.zohoapis.com/books/v3/creditnotes?organization_id=${ZOHO_ORGANIZATION_ID}`,
-                data: creditNoteData
-            });
-            console.log("Credit Note Created:", JSON.stringify(creditNoteResponse, null, 2));
-        }
+        return paymentResponse;
     } catch (error) {
         console.error("Error creating payment:", error.message);
         throw new Error("Failed to create payment");
     }
 }
 
+// Function to refund a payment
+async function refundPayment(paymentId, refundAmount) {
+    try {
+        // Prepare the refund data
+        const refundData = {
+            amount: refundAmount,
+            date: new Date().toISOString().split("T")[0],
+            description: "Refund for invoice update"
+        };
+
+        console.log("Refund Data:", JSON.stringify(refundData, null, 2)); // Log the refund data
+
+        // Make a POST request to create a refund
+        const refundResponse = await makeZohoRequest({
+            method: "post",
+            url: `https://www.zohoapis.com/books/v3/customerpayments/${paymentId}/refunds?organization_id=${ZOHO_ORGANIZATION_ID}`,
+            data: refundData
+        });
+        console.log("Refund created successfully:", JSON.stringify(refundResponse, null, 2)); // Log the refund response
+
+        return refundResponse;
+    } catch (error) {
+        console.error("Error creating refund:", error.message);
+        throw new Error("Failed to create refund");
+    }
+}
+
 // Function to update an invoice by removing or modifying line items
 async function updateInvoiceItems(invoiceId, updatedLineItems) {
     try {
-        // Fetch the invoice to get the current data
-        const invoiceResponse = await makeZohoRequest({
-            method: "get",
-            url: `https://www.zohoapis.com/books/v3/invoices/${invoiceId}?organization_id=${ZOHO_ORGANIZATION_ID}`
-        });
-        console.log("Current Invoice Details:", JSON.stringify(invoiceResponse, null, 2)); // Log the current invoice details
-
         // Prepare the updated invoice data
         const updatedInvoiceData = {
             line_items: updatedLineItems, // Updated line items
@@ -267,88 +263,6 @@ async function updateInvoiceItems(invoiceId, updatedLineItems) {
     }
 }
 
-// Function to adjust the payment tied to an invoice
-async function adjustPayment(paymentId, invoiceId, newTotalAmount) {
-    try {
-        // Fetch the payment to verify the current amount
-        const paymentResponse = await makeZohoRequest({
-            method: "get",
-            url: `https://www.zohoapis.com/books/v3/customerpayments/${paymentId}?organization_id=${ZOHO_ORGANIZATION_ID}`
-        });
-        console.log("Current Payment Details:", JSON.stringify(paymentResponse, null, 2)); // Log the current payment details
-
-        const currentPaymentAmount = parseFloat(paymentResponse.customerpayment.amount) || 0;
-        console.log("Current Payment Amount:", currentPaymentAmount);
-
-        // Calculate the difference between the current payment amount and the new total amount
-        const paymentAdjustment = newTotalAmount - currentPaymentAmount;
-        console.log("Payment Adjustment Required:", paymentAdjustment);
-
-        if (paymentAdjustment === 0) {
-            console.log("No payment adjustment required.");
-            return;
-        }
-
-        // Prepare the payment adjustment data
-        const paymentData = {
-            amount: newTotalAmount, // Updated payment amount
-            invoices: [
-                {
-                    invoice_id: invoiceId,
-                    amount_applied: newTotalAmount // Apply the updated amount to the invoice
-                }
-            ]
-        };
-
-        console.log("Payment Adjustment Data:", JSON.stringify(paymentData, null, 2)); // Log the payment adjustment data
-
-        // Make a PUT request to update the payment
-        const updatedPaymentResponse = await makeZohoRequest({
-            method: "put",
-            url: `https://www.zohoapis.com/books/v3/customerpayments/${paymentId}?organization_id=${ZOHO_ORGANIZATION_ID}`,
-            data: paymentData
-        });
-        console.log("Payment adjusted successfully:", JSON.stringify(updatedPaymentResponse, null, 2)); // Log the response
-
-        return updatedPaymentResponse;
-    } catch (error) {
-        console.error("Error adjusting payment:", error.response ? error.response.data : error.message);
-        throw new Error("Failed to adjust payment");
-    }
-}
-
-// Function to handle overpayments by applying a refund
-async function handleOverpayment(paymentId, excessAmount) {
-    try {
-        if (excessAmount <= 0) {
-            console.log("No overpayment detected.");
-            return;
-        }
-
-        console.log(`Overpayment detected: ${excessAmount}. Applying refund...`);
-
-        // Prepare the refund data
-        const refundData = {
-            amount: excessAmount,
-            date: new Date().toISOString().split("T")[0],
-            description: "Refund for overpayment"
-        };
-
-        // Make a POST request to create a refund
-        const refundResponse = await makeZohoRequest({
-            method: "post",
-            url: `https://www.zohoapis.com/books/v3/customerpayments/${paymentId}/refunds?organization_id=${ZOHO_ORGANIZATION_ID}`,
-            data: refundData
-        });
-        console.log("Refund created successfully:", JSON.stringify(refundResponse, null, 2)); // Log the refund response
-
-        return refundResponse;
-    } catch (error) {
-        console.error("Error handling overpayment:", error.message);
-        throw new Error("Failed to handle overpayment");
-    }
-}
-
 // Webhook endpoint for Baserow
 app.post("/webhook", async (req, res) => {
     console.log("Webhook Payload:", JSON.stringify(req.body, null, 2));
@@ -366,32 +280,32 @@ app.post("/webhook", async (req, res) => {
             console.log("Existing Invoice:", JSON.stringify(existingInvoice, null, 2)); // Log the existing invoice
             console.log("Existing invoice found. Checking for changes...");
 
-            // Step 1: Update the invoice by removing or modifying line items
-            const updatedLineItems = [
-                {
-                    description: "Updated Service",
-                    rate: 5000, // Updated rate
-                    quantity: 1
-                }
-            ];
-            const updatedInvoice = await updateInvoiceItems(existingInvoice.invoice_id, updatedLineItems);
-            console.log("Updated Invoice:", JSON.stringify(updatedInvoice, null, 2)); // Log the updated invoice
-
-            // Step 2: Find and adjust the payment tied to the invoice (if it exists)
+            // Step 1: Find the payment tied to the invoice
             const existingPayment = await findPaymentByInvoiceId(existingInvoice.invoice_id, existingInvoice.customer_id);
             if (existingPayment) {
-                const newTotalAmount = parseFloat(updatedInvoice.total) || 0;
-                await adjustPayment(existingPayment.payment_id, existingInvoice.invoice_id, newTotalAmount);
+                // Step 2: Refund the existing payment
+                const refundAmount = parseFloat(existingPayment.amount) || 0;
+                await refundPayment(existingPayment.payment_id, refundAmount);
+                console.log("Payment refunded successfully.");
 
-                // Step 3: Handle overpayment (if any)
-                const currentPaymentAmount = parseFloat(existingPayment.amount) || 0;
-                const excessAmount = currentPaymentAmount - newTotalAmount;
-                if (excessAmount > 0) {
-                    await handleOverpayment(existingPayment.payment_id, excessAmount);
-                }
+                // Step 3: Update the invoice by removing or modifying line items
+                const updatedLineItems = [
+                    {
+                        description: "Updated Service",
+                        rate: 5000, // Updated rate
+                        quantity: 1
+                    }
+                ];
+                const updatedInvoice = await updateInvoiceItems(existingInvoice.invoice_id, updatedLineItems);
+                console.log("Invoice updated successfully:", JSON.stringify(updatedInvoice, null, 2)); // Log the updated invoice
+
+                // Step 4: Reapply the payment for the updated invoice total
+                const newTotalAmount = parseFloat(updatedInvoice.total) || 0;
+                await createPayment(existingInvoice.invoice_id, newTotalAmount, "cash");
+                console.log("Payment reapplied successfully.");
             }
 
-            // Step 4: Update the invoice (if needed)
+            // Step 5: Update the invoice (if needed)
             const services = transaction["Services"] || [];
             const prices = transaction["Prices"] || [];
             const newLineItems = services.map((service, index) => ({
