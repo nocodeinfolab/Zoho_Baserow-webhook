@@ -235,7 +235,27 @@ async function createPayment(invoiceId, amount, mode = "cash") {
     }
 }
 
-// Function to update a payment (with customer_id validation)
+// Function to find a payment tied to an invoice (filtered by customer and invoice)
+async function findPaymentByInvoiceId(invoiceId, customerId) {
+    try {
+        const response = await makeZohoRequest({
+            method: "get",
+            url: `https://www.zohoapis.com/books/v3/customerpayments?organization_id=${ZOHO_ORGANIZATION_ID}&customer_id=${customerId}&invoice_id=${invoiceId}`
+        });
+        console.log("Zoho API Response for Find Payment:", JSON.stringify(response, null, 2)); // Log the response
+
+        // Return the first matching payment (if any)
+        if (response.customerpayments && response.customerpayments.length > 0) {
+            return response.customerpayments[0];
+        }
+        return null;
+    } catch (error) {
+        console.error("Error finding payment:", error.message);
+        return null;
+    }
+}
+
+// Function to update a payment
 async function updatePayment(paymentId, invoiceId, amount, paymentMode = "cash") {
     try {
         // Fetch the invoice to verify the customer_id and balance
@@ -245,7 +265,7 @@ async function updatePayment(paymentId, invoiceId, amount, paymentMode = "cash")
         });
         console.log("Invoice Details:", JSON.stringify(invoiceResponse, null, 2)); // Log the invoice details
 
-        const customerId = invoiceResponse.invoice.customer_id; // Fetch customer_id from the invoice
+        const customerId = invoiceResponse.invoice.customer_id;
         const invoiceBalance = parseFloat(invoiceResponse.invoice.balance) || 0;
         console.log("Customer ID in Invoice:", customerId);
         console.log("Invoice Balance:", invoiceBalance);
@@ -280,25 +300,6 @@ async function updatePayment(paymentId, invoiceId, amount, paymentMode = "cash")
     }
 }
 
-// Function to find an existing payment tied to an invoice
-async function findPaymentByInvoiceId(invoiceId) {
-    try {
-        const response = await makeZohoRequest({
-            method: "get",
-            url: `https://www.zohoapis.com/books/v3/customerpayments?organization_id=${ZOHO_ORGANIZATION_ID}&invoice_id=${invoiceId}`
-        });
-        console.log("Zoho API Response for Find Payment:", JSON.stringify(response, null, 2)); // Log the response
-
-        if (response.customerpayments && response.customerpayments.length > 0) {
-            return response.customerpayments[0]; // Return the first matching payment
-        }
-        return null;
-    } catch (error) {
-        console.error("Error finding payment:", error.message);
-        return null;
-    }
-}
-
 // Webhook endpoint for Baserow
 app.post("/webhook", async (req, res) => {
     console.log("Webhook Payload:", JSON.stringify(req.body, null, 2));
@@ -317,7 +318,7 @@ app.post("/webhook", async (req, res) => {
             console.log("Existing invoice found. Checking for changes...");
 
             // Step 1: Find and update the payment tied to the invoice (if it exists)
-            const existingPayment = await findPaymentByInvoiceId(existingInvoice.invoice_id);
+            const existingPayment = await findPaymentByInvoiceId(existingInvoice.invoice_id, existingInvoice.customer_id);
             if (existingPayment) {
                 const totalAmountPaid = parseFloat(transaction["Total Amount Paid"]) || 0;
                 if (totalAmountPaid > 0) {
