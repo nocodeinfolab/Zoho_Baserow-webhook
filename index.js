@@ -220,6 +220,7 @@ async function createPayment(invoiceId, amount, mode = "cash") {
             payment_mode: mode, // Required
             amount: paymentAmount, // Required
             date: new Date().toISOString().split("T")[0], // Required
+            reference_number: transactionId, // Use the Transaction ID as the Reference Number
             invoices: [
                 {
                     invoice_id: invoiceId, // Required
@@ -314,7 +315,7 @@ app.post("/webhook", async (req, res) => {
                 const totalAmountPaid = parseFloat(transaction["Total Amount Paid"]) || 0;
                 console.log("Total Amount Paid from Payload:", totalAmountPaid);
 
-                await createPayment(existingInvoice.invoice_id, totalAmountPaid, "cash");
+                await createPayment(existingInvoice.invoice_id, totalAmountPaid, transactionId, "cash");
                 console.log("New payment created and applied successfully.");
             }
         } else {
@@ -324,7 +325,7 @@ app.post("/webhook", async (req, res) => {
             // Record payment only if Total Amount Paid is greater than 0
             const totalAmountPaid = parseFloat(transaction["Total Amount Paid"]) || 0;
             if (totalAmountPaid > 0) {
-                await createPayment(newInvoice.invoice_id, totalAmountPaid, "cash");
+                await createPayment(newInvoice.invoice_id, totalAmountPaid, transactionId, "cash");
             } else {
                 console.log("Total Amount Paid is zero. Skipping payment creation.");
             }
