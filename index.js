@@ -192,7 +192,7 @@ async function createInvoice(transaction) {
 }
 
 // Function to create a payment and tie it to the invoice
-async function createPayment(invoiceId, amount, mode = "cash") {
+async function createPayment(invoiceId, amount, transactionId, mode = "cash") {
     try {
         // Fetch the invoice to verify the customer_id and balance
         const invoiceResponse = await makeZohoRequest({
