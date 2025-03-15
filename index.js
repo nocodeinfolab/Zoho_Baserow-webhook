@@ -165,15 +165,17 @@ async function createInvoice(transaction) {
             quantity: 1
         }));
 
-        // Extract the total payable amount
+        // Extract the total payable amount and discount
         const payableAmount = parseFloat(transaction["Payable Amount"]) || 0;
+        const discountAmount = parseFloat(transaction["Discount (Amount)"]) || 0;
 
         const invoiceData = {
             customer_id: customerId, // Use customer_id instead of customer_name
             reference_number: transaction["Transaction ID"],
             date: transaction["Date"] || new Date().toISOString().split("T")[0],
             line_items: lineItems,
-            total: payableAmount // Set the total payable amount
+            total: payableAmount, // Set the total payable amount
+            discount: discountAmount // Apply the discount amount
         };
 
         console.log("Invoice Data:", JSON.stringify(invoiceData, null, 2)); // Log the invoice data
@@ -191,8 +193,23 @@ async function createInvoice(transaction) {
     }
 }
 
+// Function to determine the payment mode based on the payload
+function determinePaymentMode(transaction) {
+    if (transaction["Amount Paid (Cash)"] && parseFloat(transaction["Amount Paid (Cash)"]) > 0) {
+        return "Cash";
+    } else if (transaction["Bank Transfer"] && parseFloat(transaction["Bank Transfer"]) > 0) {
+        return "Bank Transfer";
+    } else if (transaction["Cheque"] && parseFloat(transaction["Cheque"]) > 0) {
+        return "Check";
+    } else if (transaction["POS"] && parseFloat(transaction["POS"]) > 0) {
+        return "POS";
+    } else {
+        return "Cash"; // Default to Cash if no payment mode is specified
+    }
+}
+
 // Function to create a payment and tie it to the invoice
-async function createPayment(invoiceId, amount, transactionId, mode = "cash") {
+async function createPayment(invoiceId, amount, transactionId, transaction) {
     try {
         // Fetch the invoice to verify the customer_id and balance
         const invoiceResponse = await makeZohoRequest({
@@ -214,10 +231,14 @@ async function createPayment(invoiceId, amount, transactionId, mode = "cash") {
             return;
         }
 
+        // Determine the payment mode based on the payload
+        const paymentMode = determinePaymentMode(transaction);
+        console.log("Payment Mode:", paymentMode);
+
         // Payment data with invoice application details
         const paymentData = {
             customer_id: customerId, // Required
-            payment_mode: mode, // Required
+            payment_mode: paymentMode, // Required
             amount: paymentAmount, // Required
             date: new Date().toISOString().split("T")[0], // Required
             reference_number: transactionId, // Use the Transaction ID as the Reference Number
@@ -315,7 +336,7 @@ app.post("/webhook", async (req, res) => {
                 const totalAmountPaid = parseFloat(transaction["Total Amount Paid"]) || 0;
                 console.log("Total Amount Paid from Payload:", totalAmountPaid);
 
-                await createPayment(existingInvoice.invoice_id, totalAmountPaid, transactionId, "cash");
+                await createPayment(existingInvoice.invoice_id, totalAmountPaid, transactionId, transaction);
                 console.log("New payment created and applied successfully.");
             }
         } else {
@@ -325,7 +346,7 @@ app.post("/webhook", async (req, res) => {
             // Record payment only if Total Amount Paid is greater than 0
             const totalAmountPaid = parseFloat(transaction["Total Amount Paid"]) || 0;
             if (totalAmountPaid > 0) {
-                await createPayment(newInvoice.invoice_id, totalAmountPaid, transactionId, "cash");
+                await createPayment(newInvoice.invoice_id, totalAmountPaid, transactionId, transaction);
             } else {
                 console.log("Total Amount Paid is zero. Skipping payment creation.");
             }
