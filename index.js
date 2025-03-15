@@ -103,6 +103,21 @@ async function findPaymentByInvoiceId(invoiceId, customerId) {
     }
 }
 
+// Function to delete a payment
+async function deletePayment(paymentId) {
+    try {
+        const response = await makeZohoRequest({
+            method: "delete",
+            url: `https://www.zohoapis.com/books/v3/customerpayments/${paymentId}?organization_id=${ZOHO_ORGANIZATION_ID}`
+        });
+        console.log("Payment deleted successfully:", JSON.stringify(response, null, 2)); // Log the response
+        return response;
+    } catch (error) {
+        console.error("Error deleting payment:", error.response ? error.response.data : error.message);
+        throw new Error("Failed to delete payment");
+    }
+}
+
 // Function to find or create a customer in Zoho Books
 async function findOrCreateCustomer(customerName) {
     try {
@@ -229,33 +244,6 @@ async function createPayment(invoiceId, amount, mode = "cash") {
     }
 }
 
-// Function to refund a payment
-async function refundPayment(paymentId, refundAmount) {
-    try {
-        // Prepare the refund data
-        const refundData = {
-            amount: refundAmount,
-            date: new Date().toISOString().split("T")[0],
-            description: "Refund for invoice update"
-        };
-
-        console.log("Refund Data:", JSON.stringify(refundData, null, 2)); // Log the refund data
-
-        // Make a POST request to create a refund
-        const refundResponse = await makeZohoRequest({
-            method: "post",
-            url: `https://www.zohoapis.com/books/v3/customerpayments/${paymentId}/refunds?organization_id=${ZOHO_ORGANIZATION_ID}`,
-            data: refundData
-        });
-        console.log("Refund created successfully:", JSON.stringify(refundResponse, null, 2)); // Log the refund response
-
-        return refundResponse;
-    } catch (error) {
-        console.error("Error creating refund:", error.message);
-        throw new Error("Failed to create refund");
-    }
-}
-
 // Function to update an invoice by removing or modifying line items
 async function updateInvoiceItems(invoiceId, updatedLineItems) {
     try {
@@ -301,10 +289,9 @@ app.post("/webhook", async (req, res) => {
             // Step 1: Find the payment tied to the invoice
             const existingPayment = await findPaymentByInvoiceId(existingInvoice.invoice_id, existingInvoice.customer_id);
             if (existingPayment) {
-                // Step 2: Refund the existing payment
-                const refundAmount = parseFloat(existingPayment.amount) || 0;
-                await refundPayment(existingPayment.payment_id, refundAmount);
-                console.log("Payment refunded successfully.");
+                // Step 2: Delete the existing payment
+                await deletePayment(existingPayment.payment_id);
+                console.log("Payment deleted successfully.");
 
                 // Step 3: Update the invoice by removing or modifying line items
                 const updatedLineItems = [
@@ -317,10 +304,10 @@ app.post("/webhook", async (req, res) => {
                 const updatedInvoice = await updateInvoiceItems(existingInvoice.invoice_id, updatedLineItems);
                 console.log("Invoice updated successfully:", JSON.stringify(updatedInvoice, null, 2)); // Log the updated invoice
 
-                // Step 4: Reapply the payment for the updated invoice total
+                // Step 4: Create a new payment for the updated invoice total
                 const newTotalAmount = parseFloat(updatedInvoice.total) || 0;
                 await createPayment(existingInvoice.invoice_id, newTotalAmount, "cash");
-                console.log("Payment reapplied successfully.");
+                console.log("New payment created and applied successfully.");
             }
         } else {
             console.log("No existing invoice found. Creating a new one...");
