@@ -210,6 +210,56 @@ function determinePaymentMode(transaction) {
     }
 }
 
+// Function to check if discount is applied in the invoice
+async function isDiscountApplied(invoiceId, discountAmount) {
+    try {
+        const invoiceResponse = await makeZohoRequest({
+            method: "get",
+            url: `https://www.zohoapis.com/books/v3/invoices/${invoiceId}?organization_id=${ZOHO_ORGANIZATION_ID}`
+        });
+
+        const invoice = invoiceResponse.invoice;
+        const appliedDiscount = parseFloat(invoice.discount) || 0;
+
+        // Check if the discount in the invoice matches the discount in the payload
+        return appliedDiscount === discountAmount;
+    } catch (error) {
+        console.error("Error checking discount in invoice:", error.message);
+        throw new Error("Failed to check discount in invoice");
+    }
+}
+
+// Function to apply discount to the invoice
+async function applyDiscountToInvoice(invoiceId, discountAmount) {
+    try {
+        const invoiceResponse = await makeZohoRequest({
+            method: "get",
+            url: `https://www.zohoapis.com/books/v3/invoices/${invoiceId}?organization_id=${ZOHO_ORGANIZATION_ID}`
+        });
+
+        const invoice = invoiceResponse.invoice;
+
+        // Update the invoice with the new discount
+        const updatedInvoiceData = {
+            discount: discountAmount,
+            discount_type: "entity_level",
+            is_discount_before_tax: true
+        };
+
+        const response = await makeZohoRequest({
+            method: "put",
+            url: `https://www.zohoapis.com/books/v3/invoices/${invoiceId}?organization_id=${ZOHO_ORGANIZATION_ID}`,
+            data: updatedInvoiceData
+        });
+
+        console.log("Discount applied to invoice:", JSON.stringify(response, null, 2));
+        return response.invoice;
+    } catch (error) {
+        console.error("Error applying discount to invoice:", error.message);
+        throw new Error("Failed to apply discount to invoice");
+    }
+}
+
 // Function to create a payment and tie it to the invoice
 async function createPayment(invoiceId, amount, transactionId, transaction) {
     try {
@@ -268,44 +318,6 @@ async function createPayment(invoiceId, amount, transactionId, transaction) {
     }
 }
 
-// Function to update an invoice by removing or modifying line items
-async function updateInvoiceItems(invoiceId, transaction) {
-    try {
-        // Extract services and prices from the transaction
-        const services = transaction["Services"] || [];
-        const prices = transaction["Prices"] || [];
-        const payableAmount = parseFloat(transaction["Payable Amount"]) || 0;
-
-        // Prepare the updated line items
-        const updatedLineItems = services.map((service, index) => ({
-            description: service.value || "Service",
-            rate: parseFloat(prices[index]?.value) || 0,
-            quantity: 1
-        }));
-
-        // Prepare the updated invoice data
-        const updatedInvoiceData = {
-            line_items: updatedLineItems,
-            total: payableAmount, // Use the Payable Amount from the payload
-            reason: "Correction to invoice details" // Add a reason for the update
-        };
-
-        console.log("Updated Invoice Data:", JSON.stringify(updatedInvoiceData, null, 2)); // Log the updated invoice data
-
-        // Make a PUT request to update the invoice
-        const response = await makeZohoRequest({
-            method: "put",
-            url: `https://www.zohoapis.com/books/v3/invoices/${invoiceId}?organization_id=${ZOHO_ORGANIZATION_ID}`,
-            data: updatedInvoiceData
-        });
-        console.log("Invoice updated successfully:", JSON.stringify(response, null, 2)); // Log the response
-        return response.invoice;
-    } catch (error) {
-        console.error("Error updating invoice items:", error.message);
-        throw new Error("Failed to update invoice items");
-    }
-}
-
 // Webhook endpoint for Baserow
 app.post("/webhook", async (req, res) => {
     console.log("Webhook Payload:", JSON.stringify(req.body, null, 2));
@@ -323,24 +335,32 @@ app.post("/webhook", async (req, res) => {
             console.log("Existing Invoice:", JSON.stringify(existingInvoice, null, 2)); // Log the existing invoice
             console.log("Existing invoice found. Checking for changes...");
 
-            // Step 1: Find the payment tied to the invoice
+            // Step 1: Check if the discount is applied
+            const discountAmount = parseFloat(transaction["Discount"]) || 0;
+            if (discountAmount > 0) {
+                const isDiscountAlreadyApplied = await isDiscountApplied(existingInvoice.invoice_id, discountAmount);
+                if (!isDiscountAlreadyApplied) {
+                    console.log("Discount not applied. Applying discount to invoice...");
+                    await applyDiscountToInvoice(existingInvoice.invoice_id, discountAmount);
+                } else {
+                    console.log("Discount already applied to invoice.");
+                }
+            }
+
+            // Step 2: Find the payment tied to the invoice
             const existingPayment = await findPaymentByInvoiceId(existingInvoice.invoice_id, existingInvoice.customer_id);
             if (existingPayment) {
-                // Step 2: Delete the existing payment
+                // Step 3: Delete the existing payment
                 await deletePayment(existingPayment.payment_id);
                 console.log("Payment deleted successfully.");
-
-                // Step 3: Update the invoice with the correct Payable Amount
-                const updatedInvoice = await updateInvoiceItems(existingInvoice.invoice_id, transaction);
-                console.log("Invoice updated successfully:", JSON.stringify(updatedInvoice, null, 2)); // Log the updated invoice
-
-                // Step 4: Create a new payment for the updated invoice total
-                const totalAmountPaid = parseFloat(transaction["Total Amount Paid"]) || 0;
-                console.log("Total Amount Paid from Payload:", totalAmountPaid);
-
-                await createPayment(existingInvoice.invoice_id, totalAmountPaid, transactionId, transaction);
-                console.log("New payment created and applied successfully.");
             }
+
+            // Step 4: Create a new payment for the updated invoice total
+            const totalAmountPaid = parseFloat(transaction["Total Amount Paid"]) || 0;
+            console.log("Total Amount Paid from Payload:", totalAmountPaid);
+
+            await createPayment(existingInvoice.invoice_id, totalAmountPaid, transactionId, transaction);
+            console.log("New payment created and applied successfully.");
         } else {
             console.log("No existing invoice found. Creating a new one...");
             const newInvoice = await createInvoice(transaction);
