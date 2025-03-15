@@ -245,12 +245,25 @@ async function createPayment(invoiceId, amount, mode = "cash") {
 }
 
 // Function to update an invoice by removing or modifying line items
-async function updateInvoiceItems(invoiceId, updatedLineItems) {
+async function updateInvoiceItems(invoiceId, transaction) {
     try {
+        // Extract services and prices from the transaction
+        const services = transaction["Services"] || [];
+        const prices = transaction["Prices"] || [];
+        const payableAmount = parseFloat(transaction["Payable Amount"]) || 0;
+
+        // Prepare the updated line items
+        const updatedLineItems = services.map((service, index) => ({
+            description: service.value || "Service",
+            rate: parseFloat(prices[index]?.value) || 0,
+            quantity: 1
+        }));
+
         // Prepare the updated invoice data
         const updatedInvoiceData = {
-            line_items: updatedLineItems, // Updated line items
-            reason: "Cancellation of items" // Add a reason for the update
+            line_items: updatedLineItems,
+            total: payableAmount, // Use the Payable Amount from the payload
+            reason: "Correction to invoice details" // Add a reason for the update
         };
 
         console.log("Updated Invoice Data:", JSON.stringify(updatedInvoiceData, null, 2)); // Log the updated invoice data
@@ -293,20 +306,15 @@ app.post("/webhook", async (req, res) => {
                 await deletePayment(existingPayment.payment_id);
                 console.log("Payment deleted successfully.");
 
-                // Step 3: Update the invoice by removing or modifying line items
-                const updatedLineItems = [
-                    {
-                        description: "Updated Service",
-                        rate: 5000, // Updated rate
-                        quantity: 1
-                    }
-                ];
-                const updatedInvoice = await updateInvoiceItems(existingInvoice.invoice_id, updatedLineItems);
+                // Step 3: Update the invoice with the correct Payable Amount
+                const updatedInvoice = await updateInvoiceItems(existingInvoice.invoice_id, transaction);
                 console.log("Invoice updated successfully:", JSON.stringify(updatedInvoice, null, 2)); // Log the updated invoice
 
                 // Step 4: Create a new payment for the updated invoice total
-                const newTotalAmount = parseFloat(updatedInvoice.total) || 0;
-                await createPayment(existingInvoice.invoice_id, newTotalAmount, "cash");
+                const totalAmountPaid = parseFloat(transaction["Total Amount Paid"]) || 0;
+                console.log("Total Amount Paid from Payload:", totalAmountPaid);
+
+                await createPayment(existingInvoice.invoice_id, totalAmountPaid, "cash");
                 console.log("New payment created and applied successfully.");
             }
         } else {
