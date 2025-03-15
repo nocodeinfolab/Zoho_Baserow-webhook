@@ -167,7 +167,7 @@ async function createInvoice(transaction) {
 
         // Extract the total payable amount and discount
         const payableAmount = parseFloat(transaction["Payable Amount"]) || 0;
-        const discountAmount = parseFloat(transaction["Discount (Amount)"]) || 0;
+        const discountAmount = parseFloat(transaction["Discount"]) || 0;
 
         const invoiceData = {
             customer_id: customerId, // Use customer_id instead of customer_name
@@ -175,7 +175,9 @@ async function createInvoice(transaction) {
             date: transaction["Date"] || new Date().toISOString().split("T")[0],
             line_items: lineItems,
             total: payableAmount, // Set the total payable amount
-            discount: discountAmount // Apply the discount amount
+            discount: discountAmount, // Apply the discount amount (absolute value)
+            discount_type: "entity_level", // Apply discount at the invoice level
+            is_discount_before_tax: true // Apply discount before tax
         };
 
         console.log("Invoice Data:", JSON.stringify(invoiceData, null, 2)); // Log the invoice data
