@@ -85,6 +85,24 @@ async function findExistingInvoice(transactionId) {
     }
 }
 
+// Function to find a payment by invoice ID and customer ID
+async function findPaymentByInvoiceId(invoiceId, customerId) {
+    try {
+        const response = await makeZohoRequest({
+            method: "get",
+            url: `https://www.zohoapis.com/books/v3/customerpayments?organization_id=${ZOHO_ORGANIZATION_ID}&invoice_id=${invoiceId}&customer_id=${customerId}`
+        });
+
+        if (response.customerpayments && response.customerpayments.length > 0) {
+            return response.customerpayments[0]; // Return the first matching payment
+        }
+        return null; // No payment found
+    } catch (error) {
+        console.error("Error finding payment by invoice ID:", error.message);
+        throw new Error("Failed to find payment by invoice ID");
+    }
+}
+
 // Function to find or create a customer in Zoho Books
 async function findOrCreateCustomer(customerName) {
     try {
@@ -304,31 +322,6 @@ app.post("/webhook", async (req, res) => {
                 await createPayment(existingInvoice.invoice_id, newTotalAmount, "cash");
                 console.log("Payment reapplied successfully.");
             }
-
-            // Step 5: Update the invoice (if needed)
-            const services = transaction["Services"] || [];
-            const prices = transaction["Prices"] || [];
-            const newLineItems = services.map((service, index) => ({
-                description: service.value || "Service",
-                rate: parseFloat(prices[index]?.value) || 0,
-                quantity: 1
-            }));
-
-            // Extract the total payable amount
-            const payableAmount = parseFloat(transaction["Payable Amount"]) || 0;
-
-            // Prepare the updated invoice data
-            const updatedInvoiceData = {
-                customer_id: existingInvoice.customer_id,
-                reference_number: transactionId,
-                date: transaction["Date"] || new Date().toISOString().split("T")[0],
-                line_items: newLineItems,
-                total: payableAmount,
-                reason: "Correction to invoice details" // Add a reason for the update
-            };
-
-            // Update the existing invoice
-            await updateInvoice(existingInvoice.invoice_id, updatedInvoiceData);
         } else {
             console.log("No existing invoice found. Creating a new one...");
             const newInvoice = await createInvoice(transaction);
