@@ -103,45 +103,23 @@ async function findPaymentByInvoiceId(invoiceId, customerId) {
     }
 }
 
-// Function to delete a payment
-async function deletePayment(paymentId) {
+// Function to delete a payment (only if it exists and can be deleted)
+async function deletePaymentIfExists(paymentId) {
+    if (!paymentId) {
+        console.log("No payment ID provided. Skipping deletion.");
+        return;
+    }
+
     try {
         const response = await makeZohoRequest({
             method: "delete",
             url: `https://www.zohoapis.com/books/v3/customerpayments/${paymentId}?organization_id=${ZOHO_ORGANIZATION_ID}`
         });
-        console.log("Payment deleted successfully:", JSON.stringify(response, null, 2)); // Log the response
+        console.log("Payment deleted successfully:", JSON.stringify(response, null, 2));
         return response;
     } catch (error) {
         console.error("Error deleting payment:", error.response ? error.response.data : error.message);
         throw new Error("Failed to delete payment");
-    }
-}
-
-// Function to find or create a customer in Zoho Books
-async function findOrCreateCustomer(customerName) {
-    try {
-        // Search for the customer in Zoho Books
-        const searchResponse = await makeZohoRequest({
-            method: "get",
-            url: `https://www.zohoapis.com/books/v3/contacts?organization_id=${ZOHO_ORGANIZATION_ID}&contact_name=${encodeURIComponent(customerName)}`
-        });
-
-        if (searchResponse.contacts && searchResponse.contacts.length > 0) {
-            // Customer exists, return the first match
-            return searchResponse.contacts[0].contact_id;
-        } else {
-            // Customer does not exist, create a new one
-            const createResponse = await makeZohoRequest({
-                method: "post",
-                url: `https://www.zohoapis.com/books/v3/contacts?organization_id=${ZOHO_ORGANIZATION_ID}`,
-                data: { contact_name: customerName }
-            });
-            return createResponse.contact.contact_id;
-        }
-    } catch (error) {
-        console.error("Error finding or creating customer:", error.message);
-        throw new Error("Failed to find or create customer");
     }
 }
 
@@ -210,56 +188,6 @@ function determinePaymentMode(transaction) {
     }
 }
 
-// Function to check if discount is applied in the invoice
-async function isDiscountApplied(invoiceId, discountAmount) {
-    try {
-        const invoiceResponse = await makeZohoRequest({
-            method: "get",
-            url: `https://www.zohoapis.com/books/v3/invoices/${invoiceId}?organization_id=${ZOHO_ORGANIZATION_ID}`
-        });
-
-        const invoice = invoiceResponse.invoice;
-        const appliedDiscount = parseFloat(invoice.discount) || 0;
-
-        // Check if the discount in the invoice matches the discount in the payload
-        return appliedDiscount === discountAmount;
-    } catch (error) {
-        console.error("Error checking discount in invoice:", error.message);
-        throw new Error("Failed to check discount in invoice");
-    }
-}
-
-// Function to apply discount to the invoice
-async function applyDiscountToInvoice(invoiceId, discountAmount) {
-    try {
-        const invoiceResponse = await makeZohoRequest({
-            method: "get",
-            url: `https://www.zohoapis.com/books/v3/invoices/${invoiceId}?organization_id=${ZOHO_ORGANIZATION_ID}`
-        });
-
-        const invoice = invoiceResponse.invoice;
-
-        // Update the invoice with the new discount
-        const updatedInvoiceData = {
-            discount: discountAmount,
-            discount_type: "entity_level",
-            is_discount_before_tax: true
-        };
-
-        const response = await makeZohoRequest({
-            method: "put",
-            url: `https://www.zohoapis.com/books/v3/invoices/${invoiceId}?organization_id=${ZOHO_ORGANIZATION_ID}`,
-            data: updatedInvoiceData
-        });
-
-        console.log("Discount applied to invoice:", JSON.stringify(response, null, 2));
-        return response.invoice;
-    } catch (error) {
-        console.error("Error applying discount to invoice:", error.message);
-        throw new Error("Failed to apply discount to invoice");
-    }
-}
-
 // Function to create a payment and tie it to the invoice
 async function createPayment(invoiceId, amount, transactionId, transaction) {
     try {
@@ -318,69 +246,6 @@ async function createPayment(invoiceId, amount, transactionId, transaction) {
     }
 }
 
-// Function to compare invoice details with payload and update if necessary
-async function compareAndUpdateInvoice(existingInvoice, transaction) {
-    try {
-        const invoiceId = existingInvoice.invoice_id;
-        const discountAmount = parseFloat(transaction["Discount"]) || 0;
-        const payableAmount = parseFloat(transaction["Payable Amount"]) || 0;
-
-        // Check if the discount is applied correctly
-        const isDiscountAlreadyApplied = await isDiscountApplied(invoiceId, discountAmount);
-        if (!isDiscountAlreadyApplied) {
-            console.log("Discount not applied. Applying discount to invoice...");
-            await applyDiscountToInvoice(invoiceId, discountAmount);
-        } else {
-            console.log("Discount already applied to invoice.");
-        }
-
-        // Check if the total amount matches
-        const invoiceResponse = await makeZohoRequest({
-            method: "get",
-            url: `https://www.zohoapis.com/books/v3/invoices/${invoiceId}?organization_id=${ZOHO_ORGANIZATION_ID}`
-        });
-
-        const invoice = invoiceResponse.invoice;
-        const invoiceTotal = parseFloat(invoice.total) || 0;
-
-        if (invoiceTotal !== payableAmount) {
-            console.log("Invoice total does not match payable amount. Updating invoice...");
-
-            // Extract services and prices
-            const services = transaction["Services"] || [];
-            const prices = transaction["Prices"] || [];
-            const lineItems = services.map((service, index) => ({
-                description: service.value || "Service",
-                rate: parseFloat(prices[index]?.value) || 0,
-                quantity: 1
-            }));
-
-            const updatedInvoiceData = {
-                line_items: lineItems,
-                total: payableAmount,
-                discount: discountAmount,
-                discount_type: "entity_level",
-                is_discount_before_tax: true
-            };
-
-            const response = await makeZohoRequest({
-                method: "put",
-                url: `https://www.zohoapis.com/books/v3/invoices/${invoiceId}?organization_id=${ZOHO_ORGANIZATION_ID}`,
-                data: updatedInvoiceData
-            });
-
-            console.log("Invoice updated successfully:", JSON.stringify(response, null, 2));
-            return response.invoice;
-        } else {
-            console.log("Invoice total matches payable amount. No update needed.");
-            return existingInvoice;
-        }
-    } catch (error) {
-        console.error("Error comparing and updating invoice:", error.message);
-        throw new Error("Failed to compare and update invoice");
-    }
-}
-
 // Webhook endpoint for Baserow
 app.post("/webhook", async (req, res) => {
     console.log("Webhook Payload:", JSON.stringify(req.body, null, 2));
@@ -398,23 +263,28 @@ app.post("/webhook", async (req, res) => {
             console.log("Existing Invoice:", JSON.stringify(existingInvoice, null, 2)); // Log the existing invoice
             console.log("Existing invoice found. Checking for changes...");
 
-            // Compare and update the invoice if necessary
-            const updatedInvoice = await compareAndUpdateInvoice(existingInvoice, transaction);
+            // Step 1: Find the payment tied to the invoice
+            const existingPayment = await findPaymentByInvoiceId(existingInvoice.invoice_id, existingInvoice.customer_id);
 
-            // Step 2: Find the payment tied to the invoice
-            const existingPayment = await findPaymentByInvoiceId(updatedInvoice.invoice_id, updatedInvoice.customer_id);
             if (existingPayment) {
-                // Step 3: Delete the existing payment
-                await deletePayment(existingPayment.payment_id);
+                // Step 2: Delete the existing payment only if it exists
+                console.log("Existing payment found. Deleting payment...");
+                await deletePaymentIfExists(existingPayment.payment_id);
                 console.log("Payment deleted successfully.");
+            } else {
+                console.log("No existing payment found. Skipping deletion.");
             }
 
-            // Step 4: Create a new payment for the updated invoice total
+            // Step 3: Create a new payment for the updated invoice total
             const totalAmountPaid = parseFloat(transaction["Total Amount Paid"]) || 0;
             console.log("Total Amount Paid from Payload:", totalAmountPaid);
 
-            await createPayment(updatedInvoice.invoice_id, totalAmountPaid, transactionId, transaction);
-            console.log("New payment created and applied successfully.");
+            if (totalAmountPaid > 0) {
+                await createPayment(existingInvoice.invoice_id, totalAmountPaid, transactionId, transaction);
+                console.log("New payment created and applied successfully.");
+            } else {
+                console.log("Total Amount Paid is zero. Skipping payment creation.");
+            }
         } else {
             console.log("No existing invoice found. Creating a new one...");
             const newInvoice = await createInvoice(transaction);
