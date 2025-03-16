@@ -61,6 +61,33 @@ async function makeZohoRequest(config, retry = true) {
     }
 }
 
+// Function to find or create a customer in Zoho Books
+async function findOrCreateCustomer(customerName) {
+    try {
+        // Search for the customer in Zoho Books
+        const searchResponse = await makeZohoRequest({
+            method: "get",
+            url: `https://www.zohoapis.com/books/v3/contacts?organization_id=${ZOHO_ORGANIZATION_ID}&contact_name=${encodeURIComponent(customerName)}`
+        });
+
+        if (searchResponse.contacts && searchResponse.contacts.length > 0) {
+            // Customer exists, return the first match
+            return searchResponse.contacts[0].contact_id;
+        } else {
+            // Customer does not exist, create a new one
+            const createResponse = await makeZohoRequest({
+                method: "post",
+                url: `https://www.zohoapis.com/books/v3/contacts?organization_id=${ZOHO_ORGANIZATION_ID}`,
+                data: { contact_name: customerName }
+            });
+            return createResponse.contact.contact_id;
+        }
+    } catch (error) {
+        console.error("Error finding or creating customer:", error.message);
+        throw new Error("Failed to find or create customer");
+    }
+}
+
 // Function to find an existing invoice
 async function findExistingInvoice(transactionId) {
     try {
