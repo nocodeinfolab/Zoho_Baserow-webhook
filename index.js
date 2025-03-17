@@ -187,6 +187,12 @@ async function createPayment(invoiceId, amount, transactionId, transaction) {
         console.log("Customer ID in Invoice:", customerId);
         console.log("Invoice Balance:", invoiceBalance);
 
+        // Check if the payment amount exceeds the invoice balance
+        if (amount > invoiceBalance) {
+            console.log("Payment amount exceeds the invoice balance. Stopping payment creation.");
+            throw new Error("Payment amount exceeds the invoice balance");
+        }
+
         // Adjust the payment amount if it exceeds the invoice balance
         const paymentAmount = Math.min(amount, invoiceBalance);
         console.log("Payment Amount to be Applied:", paymentAmount);
@@ -293,7 +299,16 @@ app.post("/webhook", async (req, res) => {
             if (totalAmountPaid > 0) {
                 // Step 4: Create a new payment for the invoice
                 console.log("Creating new payment...");
-                await createPayment(existingInvoice.invoice_id, totalAmountPaid, transactionId, transaction);
+                try {
+                    await createPayment(existingInvoice.invoice_id, totalAmountPaid, transactionId, transaction);
+                } catch (error) {
+                    if (error.message === "Payment amount exceeds the invoice balance") {
+                        console.log("Payment amount exceeds the invoice balance. Stopping script.");
+                        return res.status(400).json({ message: "Payment amount exceeds the invoice balance. Script stopped." });
+                    } else {
+                        throw error; // Re-throw other errors
+                    }
+                }
             } else {
                 console.log("Total Amount Paid is zero. Skipping payment creation.");
             }
