@@ -96,7 +96,13 @@ async function findPaymentByInvoiceId(invoiceId, customerId) {
         if (response.customerpayments && response.customerpayments.length > 0) {
             // Ensure the payment is tied to the correct invoice
             const matchingPayment = response.customerpayments.find(
-                payment => payment.invoices.some(inv => inv.invoice_id === invoiceId)
+                payment => {
+                    // Check if the payment has an `invoices` array
+                    if (payment.invoices && Array.isArray(payment.invoices)) {
+                        return payment.invoices.some(inv => inv.invoice_id === invoiceId);
+                    }
+                    return false; // Skip payments without an `invoices` array
+                }
             );
 
             if (matchingPayment) {
@@ -258,7 +264,13 @@ app.post("/webhook", async (req, res) => {
             console.log("Existing invoice found. Checking for changes...");
 
             // Step 1: Check if there is a payment tied to the invoice
-            const existingPayment = await findPaymentByInvoiceId(existingInvoice.invoice_id, existingInvoice.customer_id);
+            let existingPayment;
+            try {
+                existingPayment = await findPaymentByInvoiceId(existingInvoice.invoice_id, existingInvoice.customer_id);
+            } catch (error) {
+                console.error("Error finding payment by invoice ID:", error.message);
+                existingPayment = null; // Assume no payment exists if there's an error
+            }
 
             if (existingPayment) {
                 console.log("Payment tied to the invoice found. Deleting payment...");
