@@ -134,12 +134,14 @@ async function updateInvoice(invoiceId, transaction) {
         const payableAmount = parseFloat(transaction["Payable Amount"]) || 0;
         const discountAmount = parseFloat(transaction["Discount"]) || 0;
 
+        // Invoice data with a reason for updating a sent invoice
         const invoiceData = {
             line_items: lineItems,
             total: payableAmount, // Set the total payable amount
             discount: discountAmount, // Apply the discount amount (absolute value)
             discount_type: "entity_level", // Apply discount at the invoice level
-            is_discount_before_tax: true // Apply discount before tax
+            is_discount_before_tax: true, // Apply discount before tax
+            reason: "Updating invoice due to payment adjustment" // Mandatory reason for updating a sent invoice
         };
 
         console.log("Updating Invoice Data:", JSON.stringify(invoiceData, null, 2)); // Log the invoice data
