@@ -122,7 +122,7 @@ async function deletePayment(paymentId) {
 async function updateInvoice(invoiceId, transaction) {
     try {
         // Extract services and prices
-        const services = transaction["Services"] || [];
+        const services = transaction["Services (link)"] || [];
         const prices = transaction["Prices"] || [];
         const lineItems = services.map((service, index) => ({
             description: service.value || "Service",
@@ -174,9 +174,10 @@ async function createPayment(invoiceId, amount, transactionId, transaction) {
 
         // Adjust the payment amount if it exceeds the invoice balance
         const paymentAmount = Math.min(amount, invoiceBalance);
+        console.log("Payment Amount to be Applied:", paymentAmount);
 
         if (paymentAmount <= 0) {
-            console.log("Invoice balance is zero or negative. Skipping payment creation.");
+            console.log("Payment amount is zero or negative. Skipping payment creation.");
             return;
         }
 
@@ -215,6 +216,21 @@ async function createPayment(invoiceId, amount, transactionId, transaction) {
     }
 }
 
+// Function to determine the payment mode based on the payload
+function determinePaymentMode(transaction) {
+    if (transaction["Amount Paid (Cash)"] && parseFloat(transaction["Amount Paid (Cash)"]) > 0) {
+        return "Cash";
+    } else if (transaction["Bank Transfer"] && parseFloat(transaction["Bank Transfer"]) > 0) {
+        return "Bank Transfer";
+    } else if (transaction["Cheque"] && parseFloat(transaction["Cheque"]) > 0) {
+        return "Check";
+    } else if (transaction["POS"] && parseFloat(transaction["POS"]) > 0) {
+        return "POS";
+    } else {
+        return "Cash"; // Default to Cash if no payment mode is specified
+    }
+}
+
 // Webhook endpoint for Baserow
 app.post("/webhook", async (req, res) => {
     console.log("Webhook Payload:", JSON.stringify(req.body, null, 2));
@@ -235,40 +251,31 @@ app.post("/webhook", async (req, res) => {
             // Step 1: Check if there is a payment tied to the invoice
             const existingPayment = await findPaymentByInvoiceId(existingInvoice.invoice_id, existingInvoice.customer_id);
 
-            if (!existingPayment) {
-                // No payment found, update the invoice and stop the script
-                console.log("No payment tied to the invoice. Updating invoice and stopping script...");
-                await updateInvoice(existingInvoice.invoice_id, transaction);
-                return res.status(200).json({ message: "Invoice updated successfully. No payment tied to the invoice." });
-            } else {
-                // Payment found, delete the payment, update the invoice, and create a new payment
+            if (existingPayment) {
+                // Step 2: Delete the existing payment
                 console.log("Payment tied to the invoice found. Deleting payment...");
                 await deletePayment(existingPayment.payment_id);
-
-                console.log("Updating invoice...");
-                await updateInvoice(existingInvoice.invoice_id, transaction);
-
-                console.log("Creating new payment...");
-                const totalAmountPaid = parseFloat(transaction["Total Amount Paid"]) || 0;
-                await createPayment(existingInvoice.invoice_id, totalAmountPaid, transactionId, transaction);
-
-                console.log("Invoice and payment processed successfully.");
-                return res.status(200).json({ message: "Invoice and payment processed successfully." });
             }
-        } else {
-            // No existing invoice found, create a new one
-            console.log("No existing invoice found. Creating a new one...");
-            const newInvoice = await createInvoice(transaction);
 
-            // Record payment only if Total Amount Paid is greater than 0
+            // Step 3: Update the invoice with the current payload data
+            console.log("Updating invoice...");
+            await updateInvoice(existingInvoice.invoice_id, transaction);
+
+            // Step 4: Check if "Total Amount Paid" is greater than 0
             const totalAmountPaid = parseFloat(transaction["Total Amount Paid"]) || 0;
             if (totalAmountPaid > 0) {
-                await createPayment(newInvoice.invoice_id, totalAmountPaid, transactionId, transaction);
+                // Step 5: Create a new payment for the invoice
+                console.log("Creating new payment...");
+                await createPayment(existingInvoice.invoice_id, totalAmountPaid, transactionId, transaction);
             } else {
                 console.log("Total Amount Paid is zero. Skipping payment creation.");
             }
 
-            return res.status(200).json({ message: "New invoice created successfully." });
+            console.log("Invoice and payment processed successfully.");
+            return res.status(200).json({ message: "Invoice and payment processed successfully." });
+        } else {
+            console.log("No existing invoice found. Stopping script.");
+            return res.status(200).json({ message: "No existing invoice found. Script stopped." });
         }
     } catch (error) {
         console.error("Error details:", error);
