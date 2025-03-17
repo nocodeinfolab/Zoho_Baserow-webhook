@@ -94,7 +94,14 @@ async function findPaymentByInvoiceId(invoiceId, customerId) {
         });
 
         if (response.customerpayments && response.customerpayments.length > 0) {
-            return response.customerpayments[0]; // Return the first matching payment
+            // Ensure the payment is tied to the correct invoice
+            const matchingPayment = response.customerpayments.find(
+                payment => payment.invoices.some(inv => inv.invoice_id === invoiceId)
+            );
+
+            if (matchingPayment) {
+                return matchingPayment; // Return the matching payment
+            }
         }
         return null; // No payment found
     } catch (error) {
@@ -254,19 +261,25 @@ app.post("/webhook", async (req, res) => {
             const existingPayment = await findPaymentByInvoiceId(existingInvoice.invoice_id, existingInvoice.customer_id);
 
             if (existingPayment) {
-                // Step 2: Delete the existing payment
                 console.log("Payment tied to the invoice found. Deleting payment...");
-                await deletePayment(existingPayment.payment_id);
+                try {
+                    await deletePayment(existingPayment.payment_id);
+                } catch (error) {
+                    console.error("Error deleting payment:", error.message);
+                    console.log("Skipping payment deletion and proceeding with invoice update.");
+                }
+            } else {
+                console.log("No payment tied to the invoice found.");
             }
 
-            // Step 3: Update the invoice with the current payload data
+            // Step 2: Update the invoice with the current payload data
             console.log("Updating invoice...");
             await updateInvoice(existingInvoice.invoice_id, transaction);
 
-            // Step 4: Check if "Total Amount Paid" is greater than 0
+            // Step 3: Check if "Total Amount Paid" is greater than 0
             const totalAmountPaid = parseFloat(transaction["Total Amount Paid"]) || 0;
             if (totalAmountPaid > 0) {
-                // Step 5: Create a new payment for the invoice
+                // Step 4: Create a new payment for the invoice
                 console.log("Creating new payment...");
                 await createPayment(existingInvoice.invoice_id, totalAmountPaid, transactionId, transaction);
             } else {
