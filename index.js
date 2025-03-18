@@ -193,6 +193,12 @@ async function createPayment(invoiceId, amount, transactionId, transaction) {
             return { success: false, message: "Payment amount exceeds the invoice balance. Process stopped." };
         }
 
+        // Stop if the invoice balance is already zero
+        if (invoiceBalance === 0) {
+            console.log("Invoice balance is already zero. Stopping payment creation.");
+            return { success: false, message: "Invoice balance is already zero. Process stopped." };
+        }
+
         // Determine the payment mode based on the payload
         const paymentMode = determinePaymentMode(transaction);
         console.log("Payment Mode:", paymentMode);
@@ -292,7 +298,7 @@ app.post("/webhook", async (req, res) => {
                 console.log("Creating new payment...");
                 const paymentResult = await createPayment(existingInvoice.invoice_id, totalAmountPaid, transactionId, transaction);
                 if (paymentResult.success === false) {
-                    // If payment creation failed due to overpayment, return an error response
+                    // If payment creation failed due to overpayment or zero balance, return an error response
                     return res.status(400).json({ message: paymentResult.message });
                 }
             } else {
