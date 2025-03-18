@@ -145,7 +145,7 @@ async function updateInvoice(invoiceId, transaction) {
 
         // Extract the total payable amount and discount
         const payableAmount = parseFloat(transaction["Payable Amount"]) || 0;
-        const discountAmount = parseFloat(transaction["Discount (Amount)"]) || 0;
+        const discountAmount = parseFloat(transaction["Discount"]) || 0;
 
         // Invoice data with a reason for updating a sent invoice
         const invoiceData = {
@@ -236,7 +236,7 @@ function determinePaymentMode(transaction) {
         return "Bank Transfer";
     } else if (transaction["Cheque"] && parseFloat(transaction["Cheque"]) > 0) {
         return "Check";
-    } else if (transaction["POS Payment"] && parseFloat(transaction["POS Payment"]) > 0) {
+    } else if (transaction["POS Payment"] && parseFloat(transaction["POS"]) > 0) {
         return "POS";
     } else {
         return "Cash"; // Default to Cash if no payment mode is specified
