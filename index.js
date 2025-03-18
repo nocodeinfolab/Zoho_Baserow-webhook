@@ -145,7 +145,7 @@ async function updateInvoice(invoiceId, transaction) {
 
         // Extract the total payable amount and discount
         const payableAmount = parseFloat(transaction["Payable Amount"]) || 0;
-        const discountAmount = parseFloat(transaction["Discount"]) || 0;
+        const discountAmount = parseFloat(transaction["Discount (Amount)"]) || 0;
 
         // Invoice data with a reason for updating a sent invoice
         const invoiceData = {
@@ -187,19 +187,10 @@ async function createPayment(invoiceId, amount, transactionId, transaction) {
         console.log("Customer ID in Invoice:", customerId);
         console.log("Invoice Balance:", invoiceBalance);
 
-        // Check if the payment amount exceeds the invoice balance
+        // Stop if the payment amount exceeds the invoice balance
         if (amount > invoiceBalance) {
             console.log("Payment amount exceeds the invoice balance. Stopping payment creation.");
-            throw new Error("Payment amount exceeds the invoice balance");
-        }
-
-        // Adjust the payment amount if it exceeds the invoice balance
-        const paymentAmount = Math.min(amount, invoiceBalance);
-        console.log("Payment Amount to be Applied:", paymentAmount);
-
-        if (paymentAmount <= 0) {
-            console.log("Payment amount is zero or negative. Skipping payment creation.");
-            return;
+            return { success: false, message: "Payment amount exceeds the invoice balance. Process stopped." };
         }
 
         // Determine the payment mode based on the payload
@@ -210,13 +201,13 @@ async function createPayment(invoiceId, amount, transactionId, transaction) {
         const paymentData = {
             customer_id: customerId, // Required
             payment_mode: paymentMode, // Required
-            amount: paymentAmount, // Required
+            amount: amount, // Use the full payment amount
             date: new Date().toISOString().split("T")[0], // Required
             reference_number: transactionId, // Use the Transaction ID as the Reference Number
             invoices: [
                 {
                     invoice_id: invoiceId, // Required
-                    amount_applied: paymentAmount // Required
+                    amount_applied: amount // Required
                 }
             ]
         };
@@ -245,7 +236,7 @@ function determinePaymentMode(transaction) {
         return "Bank Transfer";
     } else if (transaction["Cheque"] && parseFloat(transaction["Cheque"]) > 0) {
         return "Check";
-    } else if (transaction["POS"] && parseFloat(transaction["POS"]) > 0) {
+    } else if (transaction["POS Payment"] && parseFloat(transaction["POS Payment"]) > 0) {
         return "POS";
     } else {
         return "Cash"; // Default to Cash if no payment mode is specified
@@ -299,15 +290,10 @@ app.post("/webhook", async (req, res) => {
             if (totalAmountPaid > 0) {
                 // Step 4: Create a new payment for the invoice
                 console.log("Creating new payment...");
-                try {
-                    await createPayment(existingInvoice.invoice_id, totalAmountPaid, transactionId, transaction);
-                } catch (error) {
-                    if (error.message === "Payment amount exceeds the invoice balance") {
-                        console.log("Payment amount exceeds the invoice balance. Stopping script.");
-                        return res.status(400).json({ message: "Payment amount exceeds the invoice balance. Script stopped." });
-                    } else {
-                        throw error; // Re-throw other errors
-                    }
+                const paymentResult = await createPayment(existingInvoice.invoice_id, totalAmountPaid, transactionId, transaction);
+                if (paymentResult.success === false) {
+                    // If payment creation failed due to overpayment, return an error response
+                    return res.status(400).json({ message: paymentResult.message });
                 }
             } else {
                 console.log("Total Amount Paid is zero. Skipping payment creation.");
