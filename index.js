@@ -57,13 +57,13 @@ async function makeZohoRequest(config, retry = true) {
 }
 
 // Function to find an existing invoice
-async function findExistingInvoice(transactionId) {
+async function findExistingInvoice(referenceNumber) {
     try {
         const response = await makeZohoRequest({
             method: "get",
-            url: `https://www.zohoapis.com/books/v3/invoices?organization_id=${ZOHO_ORGANIZATION_ID}&reference_number=${transactionId}`
+            url: `https://www.zohoapis.com/books/v3/invoices?organization_id=${ZOHO_ORGANIZATION_ID}&reference_number=${referenceNumber}`
         });
-        const matchingInvoices = response.invoices.filter(invoice => invoice.reference_number === transactionId);
+        const matchingInvoices = response.invoices.filter(invoice => invoice.reference_number === referenceNumber);
         return matchingInvoices.length > 0 ? matchingInvoices[0] : null;
     } catch (error) {
         console.error("Error finding invoice:", error.message);
@@ -71,23 +71,20 @@ async function findExistingInvoice(transactionId) {
     }
 }
 
-// Function to find a payment by invoice ID and customer ID
-async function findPaymentByInvoiceId(invoiceId, customerId) {
+// Function to find a payment by reference number
+async function findPaymentByReferenceNumber(referenceNumber) {
     try {
         const response = await makeZohoRequest({
             method: "get",
-            url: `https://www.zohoapis.com/books/v3/customerpayments?organization_id=${ZOHO_ORGANIZATION_ID}&invoice_id=${invoiceId}&customer_id=${customerId}`
+            url: `https://www.zohoapis.com/books/v3/customerpayments?organization_id=${ZOHO_ORGANIZATION_ID}&reference_number=${referenceNumber}`
         });
         if (response.customerpayments && response.customerpayments.length > 0) {
-            const matchingPayment = response.customerpayments.find(payment =>
-                payment.invoices && payment.invoices.some(inv => inv.invoice_id === invoiceId)
-            );
-            return matchingPayment || null;
+            return response.customerpayments[0]; // Return the first matching payment
         }
         return null;
     } catch (error) {
-        console.error("Error finding payment by invoice ID:", error.message);
-        throw new Error("Failed to find payment by invoice ID");
+        console.error("Error finding payment by reference number:", error.message);
+        throw new Error("Failed to find payment by reference number");
     }
 }
 
@@ -108,21 +105,6 @@ async function deletePayment(paymentId) {
 // Function to update an invoice
 async function updateInvoice(invoiceId, transaction) {
     try {
-        // Fetch the current invoice details to get the total amount
-        const invoiceDetails = await makeZohoRequest({
-            method: "get",
-            url: `https://www.zohoapis.com/books/v3/invoices/${invoiceId}?organization_id=${ZOHO_ORGANIZATION_ID}`
-        });
-
-        const invoiceTotal = parseFloat(invoiceDetails.invoice.total) || 0;
-        const payableAmount = parseFloat(transaction["Payable Amount"]) || 0;
-
-        // Validate the Payable Amount
-        if (payableAmount > invoiceTotal) {
-            console.error("Payable Amount exceeds the invoice total. Skipping update.");
-            throw new Error("Payable Amount exceeds the invoice total.");
-        }
-
         // Prepare line items
         const lineItems = (transaction["Services (link)"] || []).map((service, index) => ({
             description: service.value || "Service",
@@ -133,7 +115,7 @@ async function updateInvoice(invoiceId, transaction) {
         // Prepare invoice data
         const invoiceData = {
             line_items: lineItems,
-            total: payableAmount, // Use the validated Payable Amount
+            total: parseFloat(transaction["Payable Amount"]) || 0,
             discount: parseFloat(transaction["Discount"]) || 0,
             discount_type: "entity_level",
             is_discount_before_tax: true,
@@ -164,23 +146,23 @@ app.post("/webhook", async (req, res) => {
         // Extract the first item from the payload
         const transaction = req.body.items[0];
 
-        // Extract the transaction ID
-        const transactionId = transaction["Transaction ID"];
+        // Extract the transaction ID (used as reference number)
+        const referenceNumber = transaction["Transaction ID"];
 
         // Step 1: Find an existing invoice
         console.log("Finding existing invoice...");
-        const existingInvoice = await findExistingInvoice(transactionId);
+        const existingInvoice = await findExistingInvoice(referenceNumber);
 
         if (existingInvoice) {
             console.log("Existing Invoice Found:", JSON.stringify(existingInvoice, null, 2));
 
-            // Step 2: Check if there is a payment tied to the invoice
+            // Step 2: Find the payment tied to the invoice (using the same reference number)
             console.log("Finding payment tied to the invoice...");
             let existingPayment;
             try {
-                existingPayment = await findPaymentByInvoiceId(existingInvoice.invoice_id, existingInvoice.customer_id);
+                existingPayment = await findPaymentByReferenceNumber(referenceNumber);
             } catch (error) {
-                console.error("Error finding payment by invoice ID:", error.message);
+                console.error("Error finding payment by reference number:", error.message);
                 existingPayment = null; // Assume no payment exists if there's an error
             }
 
