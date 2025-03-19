@@ -17,7 +17,6 @@ const PORT = process.env.PORT || 3000;
 // Function to refresh Zoho token
 async function refreshZohoToken() {
     try {
-        console.log("Refreshing Zoho access token...");
         const response = await axios.post("https://accounts.zoho.com/oauth/v2/token", null, {
             params: {
                 refresh_token: ZOHO_REFRESH_TOKEN,
@@ -26,8 +25,8 @@ async function refreshZohoToken() {
                 grant_type: "refresh_token"
             }
         });
-        ZOHO_ACCESS_TOKEN = response.data.access_token; // Update the global access token
-        console.log("Zoho Access Token Refreshed:", ZOHO_ACCESS_TOKEN);
+        ZOHO_ACCESS_TOKEN = response.data.access_token;
+        console.log("Zoho Access Token Refreshed");
     } catch (error) {
         console.error("Failed to refresh Zoho token:", error.response ? error.response.data : error.message);
         throw new Error("Failed to refresh Zoho token");
@@ -37,23 +36,17 @@ async function refreshZohoToken() {
 // Function to make API requests with token expiration handling
 async function makeZohoRequest(config, retry = true) {
     try {
-        // Add authorization header to the request
         config.headers = {
             ...config.headers,
             Authorization: `Zoho-oauthtoken ${ZOHO_ACCESS_TOKEN}`
         };
-
         const response = await axios(config);
         return response.data;
     } catch (error) {
-        const isTokenExpired =
-            (error.response && error.response.status === 401) || // 401 Unauthorized
-            (error.response && error.response.data && error.response.data.code === 57); // Zoho-specific code: 57
-
+        const isTokenExpired = error.response && (error.response.status === 401 || error.response.data.code === 57);
         if (isTokenExpired && retry) {
-            console.log("Access token expired or invalid. Refreshing token and retrying request...");
             await refreshZohoToken();
-            return makeZohoRequest(config, false); // Retry the request once with the new token
+            return makeZohoRequest(config, false);
         } else {
             console.error("API request failed:", error.response ? error.response.data : error.message);
             throw new Error("API request failed");
@@ -68,17 +61,8 @@ async function findExistingInvoice(transactionId) {
             method: "get",
             url: `https://www.zohoapis.com/books/v3/invoices?organization_id=${ZOHO_ORGANIZATION_ID}&reference_number=${transactionId}`
         });
-        console.log("Zoho API Response for Find Invoice:", JSON.stringify(response, null, 2)); // Log the response
-
-        // Filter invoices by reference_number
-        const matchingInvoices = response.invoices.filter(
-            invoice => invoice.reference_number === transactionId
-        );
-
-        if (matchingInvoices.length > 0) {
-            return matchingInvoices[0];
-        }
-        return null;
+        const matchingInvoices = response.invoices.filter(invoice => invoice.reference_number === transactionId);
+        return matchingInvoices.length > 0 ? matchingInvoices[0] : null;
     } catch (error) {
         console.error("Error finding invoice:", error.message);
         return null;
@@ -92,28 +76,13 @@ async function findPaymentByInvoiceId(invoiceId, customerId) {
             method: "get",
             url: `https://www.zohoapis.com/books/v3/customerpayments?organization_id=${ZOHO_ORGANIZATION_ID}&invoice_id=${invoiceId}&customer_id=${customerId}`
         });
-
-        console.log("Payment Lookup Response:", JSON.stringify(response, null, 2)); // Log the full response
-
         if (response.customerpayments && response.customerpayments.length > 0) {
-            // Ensure the payment is tied to the correct invoice
-            const matchingPayment = response.customerpayments.find(
-                payment => {
-                    // Check if the payment has an `invoices` array
-                    if (payment.invoices && Array.isArray(payment.invoices)) {
-                        return payment.invoices.some(inv => inv.invoice_id === invoiceId);
-                    }
-                    return false; // Skip payments without an `invoices` array
-                }
+            const matchingPayment = response.customerpayments.find(payment => 
+                payment.invoices && payment.invoices.some(inv => inv.invoice_id === invoiceId)
             );
-
-            if (matchingPayment) {
-                console.log("Matching Payment Found:", JSON.stringify(matchingPayment, null, 2)); // Log the matching payment
-                return matchingPayment; // Return the matching payment
-            }
+            return matchingPayment || null;
         }
-        console.log("No payment found for the invoice."); // Log if no payment is found
-        return null; // No payment found
+        return null;
     } catch (error) {
         console.error("Error finding payment by invoice ID:", error.message);
         throw new Error("Failed to find payment by invoice ID");
@@ -123,12 +92,11 @@ async function findPaymentByInvoiceId(invoiceId, customerId) {
 // Function to delete a payment
 async function deletePayment(paymentId) {
     try {
-        const response = await makeZohoRequest({
+        await makeZohoRequest({
             method: "delete",
             url: `https://www.zohoapis.com/books/v3/customerpayments/${paymentId}?organization_id=${ZOHO_ORGANIZATION_ID}`
         });
-        console.log("Payment deleted successfully:", JSON.stringify(response, null, 2)); // Log the response
-        return response;
+        console.log("Payment deleted successfully");
     } catch (error) {
         console.error("Error deleting payment:", error.response ? error.response.data : error.message);
         throw new Error("Failed to delete payment");
@@ -138,35 +106,27 @@ async function deletePayment(paymentId) {
 // Function to update an invoice
 async function updateInvoice(invoiceId, transaction) {
     try {
-        // Extract services and prices
-        const services = transaction["Services (link)"] || [];
-        const prices = transaction["Prices"] || [];
-        const lineItems = services.map((service, index) => ({
+        const lineItems = (transaction["Services (link)"] || []).map((service, index) => ({
             description: service.value || "Service",
-            rate: parseFloat(prices[index]?.value) || 0,
+            rate: parseFloat(transaction["Prices"][index]?.value) || 0,
             quantity: 1
         }));
 
-        // Extract the discount
-        const discountAmount = parseFloat(transaction["Discount"]) || 0;
-
-        // Invoice data with a reason for updating a sent invoice
         const invoiceData = {
             line_items: lineItems,
-            discount: discountAmount, // Apply the discount amount (absolute value)
-            discount_type: "entity_level", // Apply discount at the invoice level
-            is_discount_before_tax: true, // Apply discount before tax
-            reason: "Updating invoice due to payment adjustment" // Mandatory reason for updating a sent invoice
+            total: parseFloat(transaction["Payable Amount"]) || 0,
+            discount: parseFloat(transaction["Discount"]) || 0,
+            discount_type: "entity_level",
+            is_discount_before_tax: true,
+            reason: "Updating invoice due to payment adjustment"
         };
-
-        console.log("Updating Invoice Data:", JSON.stringify(invoiceData, null, 2)); // Log the invoice data
 
         const response = await makeZohoRequest({
             method: "put",
             url: `https://www.zohoapis.com/books/v3/invoices/${invoiceId}?organization_id=${ZOHO_ORGANIZATION_ID}`,
             data: invoiceData
         });
-        console.log("Invoice updated successfully:", JSON.stringify(response, null, 2)); // Log the response
+        console.log("Invoice updated successfully");
         return response.invoice;
     } catch (error) {
         console.error("Error updating invoice:", error.message);
@@ -174,56 +134,25 @@ async function updateInvoice(invoiceId, transaction) {
     }
 }
 
-// Webhook endpoint for Baserow
+// Webhook endpoint
 app.post("/webhook", async (req, res) => {
-    console.log("Webhook Payload:", JSON.stringify(req.body, null, 2));
     try {
-        // Extract the first item from the payload
         const transaction = req.body.items[0];
-
-        // Extract the transaction ID
         const transactionId = transaction["Transaction ID"];
-
-        // Find an existing invoice
         const existingInvoice = await findExistingInvoice(transactionId);
 
         if (existingInvoice) {
-            console.log("Existing Invoice:", JSON.stringify(existingInvoice, null, 2)); // Log the existing invoice
-            console.log("Existing invoice found. Checking for changes...");
-
-            // Step 1: Check if there is a payment tied to the invoice
-            let existingPayment;
-            try {
-                existingPayment = await findPaymentByInvoiceId(existingInvoice.invoice_id, existingInvoice.customer_id);
-            } catch (error) {
-                console.error("Error finding payment by invoice ID:", error.message);
-                existingPayment = null; // Assume no payment exists if there's an error
-            }
-
+            const existingPayment = await findPaymentByInvoiceId(existingInvoice.invoice_id, existingInvoice.customer_id);
             if (existingPayment) {
-                console.log("Payment tied to the invoice found. Deleting payment...");
-                try {
-                    await deletePayment(existingPayment.payment_id);
-                } catch (error) {
-                    console.error("Error deleting payment:", error.message);
-                    console.log("Skipping payment deletion and proceeding with invoice update.");
-                }
-            } else {
-                console.log("No payment tied to the invoice found.");
+                await deletePayment(existingPayment.payment_id);
             }
-
-            // Step 2: Update the invoice with the current payload data
-            console.log("Updating invoice...");
             await updateInvoice(existingInvoice.invoice_id, transaction);
-
-            console.log("Invoice processed successfully.");
             return res.status(200).json({ message: "Invoice processed successfully." });
         } else {
-            console.log("No existing invoice found. Stopping script.");
-            return res.status(200).json({ message: "No existing invoice found. Script stopped." });
+            return res.status(200).json({ message: "No existing invoice found." });
         }
     } catch (error) {
-        console.error("Error details:", error);
+        console.error("Error processing webhook:", error);
         res.status(500).json({ message: "Error processing webhook", error: error.message });
     }
 });
