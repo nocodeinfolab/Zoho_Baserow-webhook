@@ -190,13 +190,13 @@ async function createPayment(invoiceId, amount, transactionId, transaction) {
         // Stop if the payment amount exceeds the invoice balance
         if (amount > invoiceBalance) {
             console.log("Payment amount exceeds the invoice balance. Stopping payment creation.");
-            return { success: false, message: "Payment amount exceeds the invoice balance. Process stopped." };
+            return { success: true, message: "Payment amount exceeds the invoice balance. Process completed successfully." };
         }
 
         // Stop if the invoice balance is already zero
         if (invoiceBalance === 0) {
             console.log("Invoice balance is already zero. Stopping payment creation.");
-            return { success: false, message: "Invoice balance is already zero. Process stopped." };
+            return { success: true, message: "Invoice balance is already zero. Process completed successfully." };
         }
 
         // Determine the payment mode based on the payload
@@ -229,8 +229,14 @@ async function createPayment(invoiceId, amount, transactionId, transaction) {
 
         return paymentResponse;
     } catch (error) {
-        console.error("Error creating payment:", error.message);
-        throw new Error("Failed to create payment");
+        // Handle the specific case where the payment exceeds the invoice balance
+        if (error.response && error.response.data && error.response.data.code === 4022) {
+            console.log("Payment amount exceeds the invoice balance. Stopping payment creation.");
+            return { success: true, message: "Payment amount exceeds the invoice balance. Process completed successfully." };
+        } else {
+            console.error("Error creating payment:", error.message);
+            throw new Error("Failed to create payment");
+        }
     }
 }
 
