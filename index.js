@@ -172,89 +172,6 @@ async function updateInvoice(invoiceId, transaction) {
     }
 }
 
-// Function to create a payment and tie it to the invoice
-async function createPayment(invoiceId, amount, transactionId, transaction) {
-    try {
-        // Fetch the invoice to verify the customer_id and balance
-        const invoiceResponse = await makeZohoRequest({
-            method: "get",
-            url: `https://www.zohoapis.com/books/v3/invoices/${invoiceId}?organization_id=${ZOHO_ORGANIZATION_ID}`
-        });
-        console.log("Invoice Details:", JSON.stringify(invoiceResponse, null, 2)); // Log the invoice details
-
-        const customerId = invoiceResponse.invoice.customer_id;
-        const invoiceBalance = parseFloat(invoiceResponse.invoice.balance) || 0;
-        console.log("Customer ID in Invoice:", customerId);
-        console.log("Invoice Balance:", invoiceBalance);
-
-        // Stop if the payment amount exceeds the invoice balance
-        if (amount > invoiceBalance) {
-            console.log("Payment amount exceeds the invoice balance. Stopping payment creation.");
-            return { success: true, message: "Payment amount exceeds the invoice balance. Process completed successfully." };
-        }
-
-        // Stop if the invoice balance is already zero
-        if (invoiceBalance === 0) {
-            console.log("Invoice balance is already zero. Stopping payment creation.");
-            return { success: true, message: "Invoice balance is already zero. Process completed successfully." };
-        }
-
-        // Determine the payment mode based on the payload
-        const paymentMode = determinePaymentMode(transaction);
-        console.log("Payment Mode:", paymentMode);
-
-        // Payment data with invoice application details
-        const paymentData = {
-            customer_id: customerId, // Required
-            payment_mode: paymentMode, // Required
-            amount: amount, // Use the full payment amount
-            date: new Date().toISOString().split("T")[0], // Required
-            reference_number: transactionId, // Use the Transaction ID as the Reference Number
-            invoices: [
-                {
-                    invoice_id: invoiceId, // Required
-                    amount_applied: amount // Required
-                }
-            ]
-        };
-
-        console.log("Payment Data:", JSON.stringify(paymentData, null, 2)); // Log the payment data
-
-        const paymentResponse = await makeZohoRequest({
-            method: "post",
-            url: `https://www.zohoapis.com/books/v3/customerpayments?organization_id=${ZOHO_ORGANIZATION_ID}`,
-            data: paymentData
-        });
-        console.log("Payment created and applied successfully:", JSON.stringify(paymentResponse, null, 2)); // Log the payment response
-
-        return paymentResponse;
-    } catch (error) {
-        // Handle the specific case where the payment exceeds the invoice balance
-        if (error.response && error.response.data && error.response.data.code === 4022) {
-            console.log("Payment amount exceeds the invoice balance. Stopping payment creation.");
-            return { success: true, message: "Payment amount exceeds the invoice balance. Process completed successfully." };
-        } else {
-            console.error("Error creating payment:", error.message);
-            throw new Error("Failed to create payment");
-        }
-    }
-}
-
-// Function to determine the payment mode based on the payload
-function determinePaymentMode(transaction) {
-    if (transaction["Amount Paid (Cash)"] && parseFloat(transaction["Amount Paid (Cash)"]) > 0) {
-        return "Cash";
-    } else if (transaction["Bank Transfer"] && parseFloat(transaction["Bank Transfer"]) > 0) {
-        return "Bank Transfer";
-    } else if (transaction["Cheque"] && parseFloat(transaction["Cheque"]) > 0) {
-        return "Check";
-    } else if (transaction["POS Payment"] && parseFloat(transaction["POS"]) > 0) {
-        return "POS";
-    } else {
-        return "Cash"; // Default to Cash if no payment mode is specified
-    }
-}
-
 // Webhook endpoint for Baserow
 app.post("/webhook", async (req, res) => {
     console.log("Webhook Payload:", JSON.stringify(req.body, null, 2));
@@ -297,22 +214,8 @@ app.post("/webhook", async (req, res) => {
             console.log("Updating invoice...");
             await updateInvoice(existingInvoice.invoice_id, transaction);
 
-            // Step 3: Check if "Total Amount Paid" is greater than 0
-            const totalAmountPaid = parseFloat(transaction["Total Amount Paid"]) || 0;
-            if (totalAmountPaid > 0) {
-                // Step 4: Create a new payment for the invoice
-                console.log("Creating new payment...");
-                const paymentResult = await createPayment(existingInvoice.invoice_id, totalAmountPaid, transactionId, transaction);
-                if (paymentResult.success === false) {
-                    // If payment creation failed due to overpayment or zero balance, return an error response
-                    return res.status(400).json({ message: paymentResult.message });
-                }
-            } else {
-                console.log("Total Amount Paid is zero. Skipping payment creation.");
-            }
-
-            console.log("Invoice and payment processed successfully.");
-            return res.status(200).json({ message: "Invoice and payment processed successfully." });
+            console.log("Invoice processed successfully.");
+            return res.status(200).json({ message: "Invoice processed successfully." });
         } else {
             console.log("No existing invoice found. Stopping script.");
             return res.status(200).json({ message: "No existing invoice found. Script stopped." });
