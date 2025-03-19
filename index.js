@@ -93,6 +93,8 @@ async function findPaymentByInvoiceId(invoiceId, customerId) {
             url: `https://www.zohoapis.com/books/v3/customerpayments?organization_id=${ZOHO_ORGANIZATION_ID}&invoice_id=${invoiceId}&customer_id=${customerId}`
         });
 
+        console.log("Payment Lookup Response:", JSON.stringify(response, null, 2)); // Log the full response
+
         if (response.customerpayments && response.customerpayments.length > 0) {
             // Ensure the payment is tied to the correct invoice
             const matchingPayment = response.customerpayments.find(
@@ -106,9 +108,11 @@ async function findPaymentByInvoiceId(invoiceId, customerId) {
             );
 
             if (matchingPayment) {
+                console.log("Matching Payment Found:", JSON.stringify(matchingPayment, null, 2)); // Log the matching payment
                 return matchingPayment; // Return the matching payment
             }
         }
+        console.log("No payment found for the invoice."); // Log if no payment is found
         return null; // No payment found
     } catch (error) {
         console.error("Error finding payment by invoice ID:", error.message);
